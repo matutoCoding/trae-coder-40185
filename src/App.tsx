@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import type { AppStep, CustomerRequirement, QuoteConfig, RoutePlan, BrandConfig, QuoteResult, DailyPlan } from '@/types'
+import type { AppStep, CustomerRequirement, QuoteConfig, RoutePlan, BrandConfig, QuoteResult, DailyPlan, QuoteVersion } from '@/types'
 import { generateRoutePlans } from '@/data/routes'
 import { calculateQuote } from '@/utils/quote'
 import { StepHeader } from '@/components/StepHeader'
@@ -12,6 +12,8 @@ const STORAGE_KEYS = {
   brandConfig: 'lushu_brand_config',
   requirement: 'lushu_requirement',
   editedRoutes: 'lushu_edited_routes',
+  quoteVersions: 'lushu_quote_versions',
+  quoteNote: 'lushu_quote_note',
 }
 
 const defaultRequirement: CustomerRequirement = {
@@ -78,6 +80,8 @@ export default function App() {
   const [selectedRouteId, setSelectedRouteId] = useState<string>('classic')
   const [brand, setBrand] = useState<BrandConfig>(() => loadFromStorage(STORAGE_KEYS.brandConfig, defaultBrand))
   const [editedRoutes, setEditedRoutes] = useState<Record<string, RoutePlan>>(() => loadFromStorage(STORAGE_KEYS.editedRoutes, {}))
+  const [quoteVersions, setQuoteVersions] = useState<QuoteVersion[]>(() => loadFromStorage<QuoteVersion[]>(STORAGE_KEYS.quoteVersions, []))
+  const [quoteNote, setQuoteNote] = useState<string>(() => loadFromStorage<string>(STORAGE_KEYS.quoteNote, ''))
 
   useEffect(() => {
     saveToStorage(STORAGE_KEYS.requirement, requirement)
@@ -94,6 +98,14 @@ export default function App() {
   useEffect(() => {
     saveToStorage(STORAGE_KEYS.editedRoutes, editedRoutes)
   }, [editedRoutes])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.quoteVersions, quoteVersions)
+  }, [quoteVersions])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.quoteNote, quoteNote)
+  }, [quoteNote])
 
   const baseRoutes = useMemo(
     () => generateRoutePlans(requirement.days, requirement.destination, requirement.includeHiddenGems),
@@ -147,6 +159,29 @@ export default function App() {
     setSelectedRouteId(id)
   }, [])
 
+  const saveQuoteVersion = useCallback((name: string) => {
+    const newVersion: QuoteVersion = {
+      id: 'qv_' + Date.now(),
+      name,
+      config: { ...quoteConfig },
+      note: quoteNote,
+      createdAt: Date.now(),
+    }
+    setQuoteVersions(prev => [...prev, newVersion])
+  }, [quoteConfig, quoteNote])
+
+  const applyQuoteVersion = useCallback((versionId: string) => {
+    const version = quoteVersions.find(v => v.id === versionId)
+    if (version) {
+      setQuoteConfig(version.config)
+      setQuoteNote(version.note)
+    }
+  }, [quoteVersions])
+
+  const deleteQuoteVersion = useCallback((versionId: string) => {
+    setQuoteVersions(prev => prev.filter(v => v.id !== versionId))
+  }, [])
+
   return (
     <div className="h-full flex flex-col bg-slate-50">
       <StepHeader
@@ -181,6 +216,12 @@ export default function App() {
             onUpdateDailyPlan={updateDailyPlan}
             onResetRoute={resetRouteEdits}
             isRouteEdited={!!editedRoutes[selectedRouteId]}
+            quoteVersions={quoteVersions}
+            quoteNote={quoteNote}
+            setQuoteNote={setQuoteNote}
+            onSaveQuoteVersion={saveQuoteVersion}
+            onApplyQuoteVersion={applyQuoteVersion}
+            onDeleteQuoteVersion={deleteQuoteVersion}
           />
         )}
         {step === 'export' && (
@@ -192,6 +233,7 @@ export default function App() {
             brand={brand}
             setBrand={setBrand}
             onBack={() => setStep('comparison')}
+            quoteNote={quoteNote}
           />
         )}
       </main>

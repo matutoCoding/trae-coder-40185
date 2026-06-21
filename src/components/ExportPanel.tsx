@@ -12,10 +12,11 @@ interface Props {
   brand: BrandConfig
   setBrand: (b: BrandConfig) => void
   onBack: () => void
+  quoteNote: string
 }
 
 export function ExportPanel(props: Props) {
-  const { requirement, route, quoteConfig, quote, brand, setBrand, onBack } = props
+  const { requirement, route, quoteConfig, quote, brand, setBrand, onBack, quoteNote } = props
   const [exporting, setExporting] = useState(false)
   const [exportSuccess, setExportSuccess] = useState(false)
   const [activeTab, setActiveTab] = useState<'preview' | 'brand'>('preview')
@@ -29,7 +30,7 @@ export function ExportPanel(props: Props) {
     setExportSuccess(false)
     try {
       const filename = `${requirement.destination || '川西'}-${route.name}-${requirement.customerName || '客户方案'}.pdf`
-      const ok = await generatePDF(brand, requirement, route, quoteConfig, quote, filename)
+      const ok = await generatePDF(brand, requirement, route, quoteConfig, quote, filename, quoteNote)
       setExportSuccess(ok)
       if (ok) setTimeout(() => setExportSuccess(false), 3000)
     } finally {
@@ -52,7 +53,7 @@ export function ExportPanel(props: Props) {
                 <span className="text-warm-600">📄</span> 路书成稿 · 预览与导出
               </h2>
               <p className="text-sm text-slate-500 mt-1">
-                PDF 将包含封面、日程、地图说明、报价、注意事项共 5 页
+                PDF 将包含封面、日程、费用说明、注意事项、地图、客户确认共 6+ 页
               </p>
             </div>
             <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1">
@@ -194,29 +195,35 @@ export function ExportPanel(props: Props) {
                         <table className="w-full text-sm">
                           <tbody>
                             {[
-                              { name: '酒店住宿', desc: `${hotelLevelLabels[quoteConfig.selectedHotelLevel]} × ${requirement.days - 1}晚`, value: quote.hotelCost },
-                              { name: '门票组合', desc: selectedTickets || '客户自理', value: quote.ticketCost },
-                              { name: '增值服务', desc: [
-                                quoteConfig.includeLeader && '专业领队',
-                                quoteConfig.includeRescue && '救援服务',
-                                quoteConfig.includeInsurance && '保险',
-                                quoteConfig.includeMeals && '餐饮包',
-                              ].filter(Boolean).join('、') || '无', value: quote.serviceCost },
-                              { name: '交通及其他', desc: requirement.transportType === 'rental' ? '含租车' : '自带车', value: quote.otherCost },
-                              { name: '计划利润', desc: `${quoteConfig.profitMargin}%`, value: quote.profit, highlight: true },
-                            ].map((row, i) => (
+                              { name: '酒店住宿', desc: `${hotelLevelLabels[quoteConfig.selectedHotelLevel]} × ${requirement.days - 1}晚`, value: quote.hotelCost, perPerson: Math.round(quote.hotelCost / requirement.peopleCount) },
+                              { name: '门票组合', desc: selectedTickets || '客户自理', value: quote.ticketCost, perPerson: Math.round(quote.ticketCost / requirement.peopleCount) },
+                              { name: '├ 专业领队', desc: quoteConfig.includeLeader ? '全程' : '未含', value: quote.serviceBreakdown.leaderCost, perPerson: Math.round(quote.serviceBreakdown.leaderCost / requirement.peopleCount), indent: true, muted: !quoteConfig.includeLeader },
+                              { name: '├ 应急救援', desc: quoteConfig.includeRescue ? '全程' : '未含', value: quote.serviceBreakdown.rescueCost, perPerson: Math.round(quote.serviceBreakdown.rescueCost / requirement.peopleCount), indent: true, muted: !quoteConfig.includeRescue },
+                              { name: '├ 旅游保险', desc: quoteConfig.includeInsurance ? '高原专项' : '未含', value: quote.serviceBreakdown.insuranceCost, perPerson: Math.round(quote.serviceBreakdown.insuranceCost / requirement.peopleCount), indent: true, muted: !quoteConfig.includeInsurance },
+                              { name: '└ 餐饮包', desc: quoteConfig.includeMeals ? '含特色餐' : '未含', value: quote.serviceBreakdown.mealsCost, perPerson: Math.round(quote.serviceBreakdown.mealsCost / requirement.peopleCount), indent: true, muted: !quoteConfig.includeMeals },
+                              { name: '增值服务小计', desc: '-', value: quote.serviceCost, perPerson: Math.round(quote.serviceCost / requirement.peopleCount), sub: true },
+                              { name: '交通及其他', desc: requirement.transportType === 'rental' ? '含租车' : '自带车', value: quote.otherCost, perPerson: Math.round(quote.otherCost / requirement.peopleCount) },
+                              { name: '计划利润', desc: `${quoteConfig.profitMargin}%`, value: quote.profit, perPerson: Math.round(quote.profit / requirement.peopleCount), highlight: true },
+                            ].map((row: any, i) => (
                               <tr key={i} className="border-b border-slate-100 last:border-0">
-                                <td className="py-2 pr-2">
-                                  <div className={`text-xs font-semibold ${row.highlight ? 'text-green-600' : 'text-slate-700'}`}>{row.name}</div>
-                                  {row.desc && <div className="text-[10px] text-slate-400">{row.desc}</div>}
+                                <td className={`py-1.5 pr-2 ${row.indent ? 'pl-4' : ''}`}>
+                                  <div className={`text-[11px] font-semibold ${row.highlight ? 'text-green-600' : row.muted ? 'text-slate-400' : row.sub ? 'text-brand-700' : 'text-slate-700'}`}>{row.name}</div>
+                                  {row.desc && row.desc !== '-' && <div className="text-[9px] text-slate-400">{row.desc}</div>}
                                 </td>
-                                <td className={`py-2 text-right font-bold ${row.highlight ? 'text-green-600' : 'text-slate-800'}`}>
+                                <td className={`py-1.5 text-right text-[10px] ${row.muted ? 'text-slate-400' : 'text-slate-400'}`}>{row.perPerson > 0 ? formatMoney(row.perPerson) + '/人' : '-'}</td>
+                                <td className={`py-1.5 text-right font-bold ${row.highlight ? 'text-green-600' : row.muted ? 'text-slate-400' : row.sub ? 'text-brand-700' : 'text-slate-800'}`}>
                                   {formatMoney(row.value)}
                                 </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
+                        {quoteNote && (
+                          <div className="mt-3 p-3 rounded-lg bg-warm-50 border border-warm-100">
+                            <div className="text-[10px] font-bold text-warm-700 mb-1">📝 报价备注</div>
+                            <div className="text-[11px] text-warm-600 whitespace-pre-wrap leading-relaxed">{quoteNote}</div>
+                          </div>
+                        )}
                       </div>
 
                       <div className="space-y-4">
@@ -306,7 +313,7 @@ export function ExportPanel(props: Props) {
                         <span className="w-7 h-7 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold">5</span>
                         行程地图示意
                       </h3>
-                      <span className="text-xs text-slate-400">第 5 页 · 含签名确认栏</span>
+                      <span className="text-xs text-slate-400">第 5 页</span>
                     </div>
                     <div className="relative h-72 rounded-xl bg-gradient-to-br from-slate-50 to-blue-50/50 border border-slate-200 overflow-hidden">
                       <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none" viewBox="0 0 500 200">
@@ -358,6 +365,72 @@ export function ExportPanel(props: Props) {
                           <span className="flex items-center gap-1.5"><span className="w-5 h-0.5" style={{ background: route.accentColor }} /> 行车路线</span>
                         </div>
                         <span className="font-semibold text-slate-700">总里程 {route.totalDriveDistance}km</span>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="card p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                        <span className="w-7 h-7 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center text-xs font-bold">6</span>
+                        客户确认页
+                      </h3>
+                      <span className="text-xs text-slate-400">第 6 页 · 可直接打印签字</span>
+                    </div>
+
+                    <div className="text-center mb-4">
+                      <div className="text-lg font-bold text-brand-800 tracking-wider">行程确认单</div>
+                      <div className="w-12 h-0.5 bg-gradient-to-r from-brand-500 to-warm-400 mx-auto mt-1.5 rounded-full" />
+                    </div>
+
+                    <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 mb-4">
+                      <div className="text-xs font-bold text-brand-700 mb-2">客户信息</div>
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div><span className="text-slate-500">客户姓名：</span><span className="font-semibold text-slate-800">{requirement.customerName || '____________'}</span></div>
+                        <div><span className="text-slate-500">联系电话：</span><span className="font-semibold text-slate-800">{requirement.phone || '____________'}</span></div>
+                        <div><span className="text-slate-500">出行人数：</span><span className="font-semibold text-slate-800">{requirement.peopleCount} 人</span></div>
+                        <div><span className="text-slate-500">出团日期：</span><span className="font-semibold text-slate-800">{requirement.travelDate || '____________'}</span></div>
+                        <div className="col-span-2"><span className="text-slate-500">行程方案：</span><span className="font-semibold text-slate-800">{route.name}方案 · {requirement.days}天{requirement.days-1}晚</span></div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 p-4 text-white mb-4 text-center">
+                      <div className="text-[10px] opacity-80 mb-1">合同总报价（{requirement.peopleCount}人）</div>
+                      <div className="text-xl font-bold tracking-tight">
+                        {formatMoney(quote.totalMin)}<span className="text-sm opacity-70 mx-1">~</span>{formatMoney(quote.totalMax)}
+                      </div>
+                      <div className="text-[10px] opacity-80 mt-1">人均 {formatMoney(Math.round(quote.totalMin / requirement.peopleCount))} 起</div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 text-[10px] mb-4">
+                      <div className="rounded-lg bg-green-50 border border-green-100 p-3">
+                        <div className="font-semibold text-green-700 mb-1">✓ 费用包含</div>
+                        <ul className="text-green-600 space-y-0.5">
+                          {route.included.slice(0, 3).map((x, i) => <li key={i}>• {x}</li>)}
+                        </ul>
+                      </div>
+                      <div className="rounded-lg bg-red-50 border border-red-100 p-3">
+                        <div className="font-semibold text-red-700 mb-1">✗ 不含项目</div>
+                        <ul className="text-red-600 space-y-0.5">
+                          {route.notIncluded.slice(0, 3).map((x, i) => <li key={i}>• {x}</li>)}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-6 pt-3 border-t border-slate-200">
+                      <div>
+                        <div className="text-[10px] font-bold text-brand-700 mb-2">旅行社确认</div>
+                        <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-2.5 h-20 flex flex-col justify-end">
+                          <div className="text-[9px] text-slate-400 border-t border-slate-300 pt-1">签字 / 盖章</div>
+                          <div className="text-[9px] text-slate-400 mt-0.5">日期：______________</div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-bold text-green-700 mb-2">客户确认</div>
+                        <div className="rounded-lg border border-dashed border-green-300 bg-green-50/50 p-2.5 h-20 flex flex-col justify-end">
+                          <div className="text-[9px] text-slate-400 border-t border-slate-300 pt-1">客户签字</div>
+                          <div className="text-[9px] text-slate-400 mt-0.5">日期：______________</div>
+                        </div>
                       </div>
                     </div>
                   </section>

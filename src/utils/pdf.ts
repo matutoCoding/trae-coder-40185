@@ -9,7 +9,8 @@ export async function generatePDF(
   route: RoutePlan,
   config: QuoteConfig,
   quote: QuoteResult,
-  filename: string
+  filename: string,
+  quoteNote: string = ''
 ): Promise<boolean> {
   const container = document.createElement('div')
   container.style.position = 'fixed'
@@ -21,7 +22,7 @@ export async function generatePDF(
   document.body.appendChild(container)
 
   try {
-    const pages = buildPDFPages(brand, requirement, route, config, quote)
+    const pages = buildPDFPages(brand, requirement, route, config, quote, quoteNote)
     container.innerHTML = pages
 
     const pageElements = container.querySelectorAll('.pdf-page')
@@ -72,7 +73,8 @@ function buildPDFPages(
   requirement: CustomerRequirement,
   route: RoutePlan,
   config: QuoteConfig,
-  quote: QuoteResult
+  quote: QuoteResult,
+  quoteNote: string
 ): string {
   const selectedTickets = config.selectedTickets
     .map(id => ticketPackages.find(t => t.id === id)?.name)
@@ -80,7 +82,7 @@ function buildPDFPages(
     .join('、')
 
   const dailyChunks = chunkDailyPlans(route.dailyPlans)
-  const totalPages = 4 + dailyChunks.length + 2
+  const totalPages = 4 + dailyChunks.length + 3
 
   const pages: string[] = []
 
@@ -92,9 +94,10 @@ function buildPDFPages(
   })
 
   const quotePageNum = 3 + dailyChunks.length
-  pages.push(buildQuotePage(brand, requirement, route, config, quote, selectedTickets, quotePageNum, totalPages))
+  pages.push(buildQuotePage(brand, requirement, route, config, quote, selectedTickets, quoteNote, quotePageNum, totalPages))
   pages.push(buildNotesPage(brand, quotePageNum + 1, totalPages))
   pages.push(buildMapPage(brand, route, quotePageNum + 2, totalPages))
+  pages.push(buildConfirmPage(brand, requirement, route, quote, quotePageNum + 3, totalPages))
 
   return pages.map(html => `<div class="pdf-page" style="width:794px;min-height:1123px;background:#fff;position:relative;overflow:hidden;box-sizing:border-box;">${html}</div>`).join('')
 }
@@ -344,9 +347,11 @@ function buildQuotePage(
   config: QuoteConfig,
   quote: QuoteResult,
   selectedTickets: string,
+  quoteNote: string,
   pageNum: number,
   totalPages: number
 ) {
+  const pc = requirement.peopleCount
   return `
     <div style="padding:0;position:relative;height:100%;box-sizing:border-box;">
       ${pageHeader(brand, '三、费用说明')}
@@ -369,7 +374,7 @@ function buildQuotePage(
           3.1 费用明细
         </div>
 
-        <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:20px;">
+        <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:16px;">
           <thead>
             <tr style="background:#1e40af;color:white;">
               <th style="padding:10px 14px;text-align:left;font-weight:bold;">项目</th>
@@ -383,17 +388,41 @@ function buildQuotePage(
               <td style="padding:10px 14px;border:1px solid #e2e8f0;font-weight:bold;color:#1e40af;">🏨 酒店住宿</td>
               <td style="padding:10px 14px;border:1px solid #e2e8f0;">${hotelLevelLabels[config.selectedHotelLevel]} × ${requirement.days - 1}晚</td>
               <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;font-weight:bold;">¥${quote.hotelCost.toLocaleString()}</td>
-              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.hotelCost / requirement.peopleCount).toLocaleString()}</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.hotelCost / pc).toLocaleString()}</td>
             </tr>
             <tr>
               <td style="padding:10px 14px;border:1px solid #e2e8f0;font-weight:bold;color:#1e40af;">🎫 门票组合</td>
               <td style="padding:10px 14px;border:1px solid #e2e8f0;">${selectedTickets || '客户自理'}</td>
               <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;font-weight:bold;">¥${quote.ticketCost.toLocaleString()}</td>
-              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.ticketCost / requirement.peopleCount).toLocaleString()}</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.ticketCost / pc).toLocaleString()}</td>
             </tr>
             <tr style="background:#f8fafc;">
-              <td style="padding:10px 14px;border:1px solid #e2e8f0;font-weight:bold;color:#1e40af;">🛠️ 增值服务</td>
-              <td style="padding:10px 14px;border:1px solid #e2e8f0;">
+              <td style="padding:10px 14px 8px 28px;border:1px solid #e2e8f0;color:#475569;">├ 👨‍✈️ 专业领队</td>
+              <td style="padding:10px 14px 8px 14px;border:1px solid #e2e8f0;font-size:10px;color:#64748b;">高原经验+急救证（全程）</td>
+              <td style="padding:10px 14px 8px 14px;border:1px solid #e2e8f0;text-align:right;">¥${quote.serviceBreakdown.leaderCost.toLocaleString()}</td>
+              <td style="padding:10px 14px 8px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.serviceBreakdown.leaderCost / pc).toLocaleString()}</td>
+            </tr>
+            <tr>
+              <td style="padding:8px 14px 8px 28px;border:1px solid #e2e8f0;color:#475569;">├ 🆘 应急救援</td>
+              <td style="padding:8px 14px;border:1px solid #e2e8f0;font-size:10px;color:#64748b;">卫星电话+拖车服务</td>
+              <td style="padding:8px 14px;border:1px solid #e2e8f0;text-align:right;">¥${quote.serviceBreakdown.rescueCost.toLocaleString()}</td>
+              <td style="padding:8px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.serviceBreakdown.rescueCost / pc).toLocaleString()}</td>
+            </tr>
+            <tr style="background:#f8fafc;">
+              <td style="padding:8px 14px 8px 28px;border:1px solid #e2e8f0;color:#475569;">├ 🛡️ 旅游保险</td>
+              <td style="padding:8px 14px;border:1px solid #e2e8f0;font-size:10px;color:#64748b;">高原专项保障</td>
+              <td style="padding:8px 14px;border:1px solid #e2e8f0;text-align:right;">¥${quote.serviceBreakdown.insuranceCost.toLocaleString()}</td>
+              <td style="padding:8px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.serviceBreakdown.insuranceCost / pc).toLocaleString()}</td>
+            </tr>
+            <tr>
+              <td style="padding:8px 14px 10px 28px;border:1px solid #e2e8f0;color:#475569;">└ 🍽️ 餐饮包</td>
+              <td style="padding:8px 14px 10px 14px;border:1px solid #e2e8f0;font-size:10px;color:#64748b;">含特色餐体验</td>
+              <td style="padding:8px 14px 10px 14px;border:1px solid #e2e8f0;text-align:right;">¥${quote.serviceBreakdown.mealsCost.toLocaleString()}</td>
+              <td style="padding:8px 14px 10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.serviceBreakdown.mealsCost / pc).toLocaleString()}</td>
+            </tr>
+            <tr style="background:#eff6ff;">
+              <td style="padding:10px 14px;border:1px solid #bfdbfe;font-weight:bold;color:#1e40af;">🛠️ 增值服务小计</td>
+              <td style="padding:10px 14px;border:1px solid #bfdbfe;">
                 ${[
                   config.includeLeader ? '专业领队' : '',
                   config.includeRescue ? '救援服务' : '',
@@ -401,23 +430,30 @@ function buildQuotePage(
                   config.includeMeals ? '餐饮包' : '',
                 ].filter(Boolean).join('、') || '无'}
               </td>
-              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;font-weight:bold;">¥${quote.serviceCost.toLocaleString()}</td>
-              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.serviceCost / requirement.peopleCount).toLocaleString()}</td>
+              <td style="padding:10px 14px;border:1px solid #bfdbfe;text-align:right;font-weight:bold;">¥${quote.serviceCost.toLocaleString()}</td>
+              <td style="padding:10px 14px;border:1px solid #bfdbfe;text-align:right;color:#1e40af;">¥${Math.round(quote.serviceCost / pc).toLocaleString()}</td>
             </tr>
             <tr>
               <td style="padding:10px 14px;border:1px solid #e2e8f0;font-weight:bold;color:#1e40af;">🚗 交通及其他</td>
               <td style="padding:10px 14px;border:1px solid #e2e8f0;">${requirement.transportType === 'rental' ? '租车费用+保险' : '车辆服务'}</td>
               <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;font-weight:bold;">¥${quote.otherCost.toLocaleString()}</td>
-              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.otherCost / requirement.peopleCount).toLocaleString()}</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.otherCost / pc).toLocaleString()}</td>
             </tr>
             <tr style="background:#f0fdf4;border-top:2px solid #22c55e;">
               <td style="padding:10px 14px;border:1px solid #bbf7d0;font-weight:bold;color:#16a34a;">💵 计划利润</td>
               <td style="padding:10px 14px;border:1px solid #bbf7d0;">毛利率 ${config.profitMargin}%</td>
               <td style="padding:10px 14px;border:1px solid #bbf7d0;text-align:right;font-weight:bold;color:#16a34a;">¥${quote.profit.toLocaleString()}</td>
-              <td style="padding:10px 14px;border:1px solid #bbf7d0;text-align:right;color:#22c55e;">¥${Math.round(quote.profit / requirement.peopleCount).toLocaleString()}</td>
+              <td style="padding:10px 14px;border:1px solid #bbf7d0;text-align:right;color:#22c55e;">¥${Math.round(quote.profit / pc).toLocaleString()}</td>
             </tr>
           </tbody>
         </table>
+
+        ${quoteNote ? `
+          <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:10px;padding:12px 16px;margin-bottom:16px;">
+            <div style="font-size:11px;font-weight:bold;color:#9a3412;margin-bottom:6px;">📝 报价备注</div>
+            <div style="font-size:11px;color:#78350f;line-height:1.7;white-space:pre-wrap;">${quoteNote}</div>
+          </div>
+        ` : ''}
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
           <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;">
@@ -594,16 +630,119 @@ function buildMapPage(brand: BrandConfig, route: RoutePlan, pageNum: number, tot
             <div style="display:flex;gap:6px;align-items:flex-start;"><span style="color:#3b82f6;font-weight:bold;">•</span>山区信号不佳，请提前下载离线地图</div>
           </div>
         </div>
+      </div>
 
-        <div style="margin-top:30px;padding-top:20px;border-top:2px dashed #cbd5e1;">
-          <div style="display:flex;justify-content:space-between;align-items:flex-end;">
-            <div style="font-size:10px;color:#475569;">
-              <div style="margin-bottom:4px;">旅行社确认：__________________</div>
-              <div>日期：__________________</div>
+      ${pageFooter(brand, pageNum, totalPages)}
+    </div>
+  `
+}
+
+function buildConfirmPage(
+  brand: BrandConfig,
+  requirement: CustomerRequirement,
+  route: RoutePlan,
+  quote: QuoteResult,
+  pageNum: number,
+  totalPages: number
+) {
+  return `
+    <div style="padding:0;position:relative;height:100%;box-sizing:border-box;">
+      ${pageHeader(brand, '五、客户确认')}
+
+      <div style="padding:30px 40px;">
+        <div style="text-align:center;margin-bottom:24px;">
+          <div style="font-size:20px;font-weight:bold;color:#1e3a8a;letter-spacing:2px;">行程确认单</div>
+          <div style="width:60px;height:3px;background:linear-gradient(90deg,#3b82f6,#fbbf24);border-radius:2px;margin:10px auto 0;"></div>
+        </div>
+
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
+          <div style="font-size:12px;font-weight:bold;color:#1e40af;margin-bottom:12px;">📋 客户信息</div>
+          <table style="width:100%;font-size:11px;">
+            <tbody>
+              <tr>
+                <td style="padding:8px 12px;color:#64748b;width:100px;">客户姓名</td>
+                <td style="padding:8px 12px;font-weight:bold;color:#0f172a;">${requirement.customerName || '____________'}</td>
+                <td style="padding:8px 12px;color:#64748b;width:100px;">联系电话</td>
+                <td style="padding:8px 12px;font-weight:bold;color:#0f172a;">${requirement.phone || '____________'}</td>
+              </tr>
+              <tr style="background:#fff;">
+                <td style="padding:8px 12px;color:#64748b;">出行人数</td>
+                <td style="padding:8px 12px;font-weight:bold;color:#0f172a;">${requirement.peopleCount} 人</td>
+                <td style="padding:8px 12px;color:#64748b;">出团日期</td>
+                <td style="padding:8px 12px;font-weight:bold;color:#0f172a;">${requirement.travelDate || '____________'}</td>
+              </tr>
+              <tr>
+                <td style="padding:8px 12px;color:#64748b;">目的地</td>
+                <td style="padding:8px 12px;font-weight:bold;color:#0f172a;" colspan="3">${requirement.destination || '川西环线'}</td>
+              </tr>
+              <tr style="background:#fff;">
+                <td style="padding:8px 12px;color:#64748b;">行程方案</td>
+                <td style="padding:8px 12px;font-weight:bold;color:#0f172a;" colspan="3">${route.name}方案 · ${requirement.days}天${requirement.days - 1}晚 · 总里程 ${route.totalDriveDistance}km</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div style="background:linear-gradient(135deg, #1e3a8a, #3b82f6);border-radius:12px;padding:20px 24px;color:white;margin-bottom:20px;">
+          <div style="font-size:11px;opacity:80%;margin-bottom:6px;">合同总报价（${requirement.peopleCount}人）</div>
+          <div style="font-size:26px;font-weight:bold;letter-spacing:1px;">
+            ¥${quote.totalMin.toLocaleString()}
+            <span style="font-size:14px;opacity:70%;margin:0 8px;">~</span>
+            ¥${quote.totalMax.toLocaleString()}
+          </div>
+          <div style="font-size:10px;margin-top:6px;opacity:80%;">
+            人均 ¥${Math.round(quote.totalMin / requirement.peopleCount).toLocaleString()} 起 · 毛利率 ${quote.profitMargin}%
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;">
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;">
+            <div style="font-size:11px;font-weight:bold;color:#15803d;margin-bottom:8px;">✓ 费用包含项目</div>
+            <div style="font-size:10px;color:#166534;line-height:1.9;">
+              ${route.included.slice(0, 5).map((x: string) => `<div>• ${x}</div>`).join('')}
             </div>
-            <div style="font-size:10px;color:#475569;">
-              <div style="margin-bottom:4px;">客户确认签字：__________________</div>
-              <div>日期：__________________</div>
+          </div>
+          <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:14px 18px;">
+            <div style="font-size:11px;font-weight:bold;color:#b91c1c;margin-bottom:8px;">✗ 费用不含项目</div>
+            <div style="font-size:10px;color:#dc2626;line-height:1.9;">
+              ${route.notIncluded.slice(0, 5).map((x: string) => `<div>• ${x}</div>`).join('')}
+            </div>
+          </div>
+        </div>
+
+        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin-bottom:30px;">
+          <div style="font-size:11px;font-weight:bold;color:#92400e;margin-bottom:6px;">📌 特别约定</div>
+          <div style="font-size:10px;color:#78350f;line-height:1.8;">
+            ${requirement.specialRequests ? `
+              <div style="margin-bottom:6px;">客户特殊需求：${requirement.specialRequests}</div>
+            ` : ''}
+            <div>1. 本确认单经双方签字后生效，作为旅游合同附件</div>
+            <div>2. 行程中如遇不可抗力因素，双方协商调整</div>
+            <div>3. 具体退改政策详见旅游合同正文</div>
+          </div>
+        </div>
+
+        <div style="padding-top:20px;border-top:2px solid #e2e8f0;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;">
+            <div>
+              <div style="font-size:11px;font-weight:bold;color:#1e40af;margin-bottom:6px;">旅行社确认</div>
+              <div style="background:#fafafa;border:1px dashed #cbd5e1;border-radius:8px;padding:14px;">
+                <div style="font-size:10px;color:#64748b;margin-bottom:4px;">机构名称：${brand.agencyName}</div>
+                <div style="font-size:10px;color:#64748b;margin-bottom:12px;">顾问：${brand.consultantName}（${brand.consultantPhone}）</div>
+                <div style="height:40px;"></div>
+                <div style="font-size:10px;color:#94a3b8;border-top:1px solid #cbd5e1;padding-top:4px;">签字 / 盖章</div>
+                <div style="font-size:10px;color:#94a3b8;margin-top:4px;">日期：______________</div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:bold;color:#16a34a;margin-bottom:6px;">客户确认</div>
+              <div style="background:#fafafa;border:1px dashed #86efac;border-radius:8px;padding:14px;">
+                <div style="font-size:10px;color:#64748b;margin-bottom:4px;">参团人员：${requirement.peopleCount} 人</div>
+                <div style="font-size:10px;color:#64748b;margin-bottom:12px;">联系人：${requirement.customerName || '____________'}</div>
+                <div style="height:40px;"></div>
+                <div style="font-size:10px;color:#94a3b8;border-top:1px solid #cbd5e1;padding-top:4px;">客户签字</div>
+                <div style="font-size:10px;color:#94a3b8;margin-top:4px;">日期：______________</div>
+              </div>
             </div>
           </div>
         </div>

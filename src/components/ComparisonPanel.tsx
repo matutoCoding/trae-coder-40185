@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan, DailyPlan } from '@/types'
+import type { CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan, DailyPlan, QuoteVersion } from '@/types'
 import { hotelOptions, hotelLevelLabels, ticketPackages, extraServices } from '@/data/options'
 import { formatMoney } from '@/utils/quote'
 
@@ -16,6 +16,12 @@ interface Props {
   onUpdateDailyPlan: (routeId: string, dayIndex: number, updates: Partial<DailyPlan>) => void
   onResetRoute: (routeId: string) => void
   isRouteEdited: boolean
+  quoteVersions: QuoteVersion[]
+  quoteNote: string
+  setQuoteNote: (n: string) => void
+  onSaveQuoteVersion: (name: string) => void
+  onApplyQuoteVersion: (id: string) => void
+  onDeleteQuoteVersion: (id: string) => void
 }
 
 export function ComparisonPanel(props: Props) {
@@ -23,6 +29,8 @@ export function ComparisonPanel(props: Props) {
     routes, selectedRouteId, setSelectedRouteId, requirement,
     quoteConfig, setQuoteConfig, quote, onNext, onBack,
     onUpdateDailyPlan, onResetRoute, isRouteEdited,
+    quoteVersions, quoteNote, setQuoteNote,
+    onSaveQuoteVersion, onApplyQuoteVersion, onDeleteQuoteVersion,
   } = props
 
   const selectedRoute = routes.find(r => r.id === selectedRouteId) || routes[0]
@@ -30,6 +38,8 @@ export function ComparisonPanel(props: Props) {
 
   const [editingDay, setEditingDay] = useState<number | null>(null)
   const [editForm, setEditForm] = useState<Partial<DailyPlan>>({})
+  const [showSaveVersion, setShowSaveVersion] = useState(false)
+  const [newVersionName, setNewVersionName] = useState('')
 
   const toggleTicket = (id: string) => {
     const exists = quoteConfig.selectedTickets.includes(id)
@@ -87,6 +97,18 @@ export function ComparisonPanel(props: Props) {
   const otherPerPerson = Math.round(quote.otherCost / peopleCount)
   const profitPerPerson = Math.round(quote.profit / peopleCount)
   const totalPerPerson = Math.round(quote.totalMin / peopleCount)
+  const leaderPerPerson = Math.round(quote.serviceBreakdown.leaderCost / peopleCount)
+  const rescuePerPerson = Math.round(quote.serviceBreakdown.rescueCost / peopleCount)
+  const insurancePerPerson = Math.round(quote.serviceBreakdown.insuranceCost / peopleCount)
+  const mealsPerPerson = Math.round(quote.serviceBreakdown.mealsCost / peopleCount)
+
+  const handleSaveVersion = () => {
+    if (newVersionName.trim()) {
+      onSaveQuoteVersion(newVersionName.trim())
+      setNewVersionName('')
+      setShowSaveVersion(false)
+    }
+  }
 
   return (
     <div className="h-full flex flex-col relative">
@@ -353,8 +375,36 @@ export function ComparisonPanel(props: Props) {
                       <span className="text-[11px] text-slate-400 w-16 text-right">{formatMoney(ticketPerPerson)}</span>
                     </span>
                   </div>
+                  <div className="flex justify-between items-center text-slate-600 py-1 pl-3 text-[13px]">
+                    <span className="text-slate-500">├ 👨‍✈️ 专业领队</span>
+                    <span className="flex gap-6">
+                      <span className="text-slate-700">{formatMoney(quote.serviceBreakdown.leaderCost)}</span>
+                      <span className="text-[11px] text-slate-400 w-16 text-right">{formatMoney(leaderPerPerson)}</span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-slate-600 py-1 pl-3 text-[13px]">
+                    <span className="text-slate-500">├ 🆘 应急救援</span>
+                    <span className="flex gap-6">
+                      <span className="text-slate-700">{formatMoney(quote.serviceBreakdown.rescueCost)}</span>
+                      <span className="text-[11px] text-slate-400 w-16 text-right">{formatMoney(rescuePerPerson)}</span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-slate-600 py-1 pl-3 text-[13px]">
+                    <span className="text-slate-500">├ �️ 旅游保险</span>
+                    <span className="flex gap-6">
+                      <span className="text-slate-700">{formatMoney(quote.serviceBreakdown.insuranceCost)}</span>
+                      <span className="text-[11px] text-slate-400 w-16 text-right">{formatMoney(insurancePerPerson)}</span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-slate-600 py-1 pl-3 text-[13px]">
+                    <span className="text-slate-500">└ 🍽️ 餐饮包</span>
+                    <span className="flex gap-6">
+                      <span className="text-slate-700">{formatMoney(quote.serviceBreakdown.mealsCost)}</span>
+                      <span className="text-[11px] text-slate-400 w-16 text-right">{formatMoney(mealsPerPerson)}</span>
+                    </span>
+                  </div>
                   <div className="flex justify-between items-center text-slate-600 py-1">
-                    <span>🛠️ 增值服务</span>
+                    <span>�️ 增值服务小计</span>
                     <span className="flex gap-6">
                       <span className="font-medium text-slate-800">{formatMoney(quote.serviceCost)}</span>
                       <span className="text-[11px] text-slate-400 w-16 text-right">{formatMoney(servicePerPerson)}</span>
@@ -559,6 +609,98 @@ export function ComparisonPanel(props: Props) {
                   </div>
                 </div>
               )}
+
+              <div className="card p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                    <span>📋</span> 报价方案版本
+                  </h3>
+                  {!showSaveVersion ? (
+                    <button
+                      onClick={() => setShowSaveVersion(true)}
+                      className="text-xs text-brand-600 hover:text-brand-700 font-medium px-2 py-1 rounded hover:bg-brand-50"
+                    >+ 保存为新版本</button>
+                  ) : (
+                    <button
+                      onClick={() => { setShowSaveVersion(false); setNewVersionName('') }}
+                      className="text-xs text-slate-500 hover:text-slate-600"
+                    >取消</button>
+                  )}
+                </div>
+
+                {showSaveVersion && (
+                  <div className="mb-3 p-3 rounded-lg bg-brand-50 border border-brand-100 space-y-2">
+                    <input
+                      type="text"
+                      placeholder="方案名称，如：基础版、舒适版、升级版..."
+                      value={newVersionName}
+                      onChange={e => setNewVersionName(e.target.value)}
+                      className="input-base text-sm"
+                      autoFocus
+                    />
+                    <div className="flex gap-2 justify-end">
+                      <button
+                        onClick={() => { setShowSaveVersion(false); setNewVersionName('') }}
+                        className="text-xs px-3 py-1.5 rounded-md text-slate-600 hover:bg-slate-100"
+                      >取消</button>
+                      <button
+                        onClick={handleSaveVersion}
+                        disabled={!newVersionName.trim()}
+                        className="text-xs px-3 py-1.5 rounded-md bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50"
+                      >保存方案</button>
+                    </div>
+                  </div>
+                )}
+
+                {quoteVersions.length === 0 ? (
+                  <div className="text-center py-6 text-xs text-slate-400">
+                    暂无已保存的方案版本<br/>
+                    调好配置后点击上方「保存为新版本」
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {quoteVersions.map(v => (
+                      <div
+                        key={v.id}
+                        className="flex items-center justify-between p-2.5 rounded-lg border border-slate-200 hover:border-brand-300 hover:bg-brand-50/30 transition group"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold text-slate-800">{v.name}</div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">
+                            {new Date(v.createdAt).toLocaleString('zh-CN')}
+                          </div>
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => onApplyQuoteVersion(v.id)}
+                            className="text-[10px] px-2 py-1 rounded bg-brand-600 text-white hover:bg-brand-700 opacity-0 group-hover:opacity-100 transition"
+                          >应用</button>
+                          <button
+                            onClick={() => onDeleteQuoteVersion(v.id)}
+                            className="text-[10px] px-2 py-1 rounded text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition"
+                          >删除</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="card p-5">
+                <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                  <span>📝</span> 报价备注
+                </h3>
+                <textarea
+                  value={quoteNote}
+                  onChange={e => setQuoteNote(e.target.value)}
+                  placeholder="可填写优惠说明、赠送项目、客户特殊约定等内容，将显示在报价摘要和 PDF 费用说明中..."
+                  className="input-base min-h-[100px] resize-y text-sm"
+                />
+                <div className="mt-2 text-[10px] text-slate-400 flex justify-between">
+                  <span>支持多行文字</span>
+                  <span>{quoteNote.length} 字</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

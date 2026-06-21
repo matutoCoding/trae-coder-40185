@@ -80,17 +80,33 @@ export interface QuoteConfig {
   profitMargin: number
 }
 
+export interface ServiceBreakdown {
+  leaderCost: number
+  rescueCost: number
+  insuranceCost: number
+  mealsCost: number
+}
+
 export interface QuoteResult {
   subtotal: number
   hotelCost: number
   ticketCost: number
   serviceCost: number
+  serviceBreakdown: ServiceBreakdown
   otherCost: number
   profit: number
   totalMin: number
   totalMax: number
   profitMargin: number
   warnings: string[]
+}
+
+export interface QuoteVersion {
+  id: string
+  name: string
+  config: QuoteConfig
+  note: string
+  createdAt: number
 }
 
 export interface BrandConfig {

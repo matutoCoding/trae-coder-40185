@@ -1,4 +1,4 @@
-import type { CustomerRequirement, QuoteConfig, RoutePlan, QuoteResult } from '@/types'
+import type { CustomerRequirement, QuoteConfig, RoutePlan, QuoteResult, ServiceBreakdown } from '@/types'
 import { hotelOptions, ticketPackages, extraServices } from '@/data/options'
 
 export function calculateQuote(
@@ -21,26 +21,37 @@ export function calculateQuote(
     if (ticket) ticketCost += ticket.pricePerPerson * peopleCount
   }
 
-  let serviceCost = 0
+  let leaderCost = 0
+  let rescueCost = 0
+  let insuranceCost = 0
+  let mealsCost = 0
 
   if (includeLeader) {
     const leader = extraServices.find(s => s.id === 's_leader')
-    if (leader) serviceCost += leader.price * days
+    if (leader) leaderCost = leader.price * days
   }
 
   if (includeRescue) {
     const rescue = extraServices.find(s => s.id === 's_rescue')
-    if (rescue) serviceCost += rescue.price
+    if (rescue) rescueCost = rescue.price
   }
 
   if (includeInsurance) {
     const insurance = extraServices.find(s => s.id === 's_insurance')
-    if (insurance) serviceCost += insurance.price * peopleCount
+    if (insurance) insuranceCost = insurance.price * peopleCount
   }
 
   if (includeMeals) {
     const meals = extraServices.find(s => s.id === 's_meals')
-    if (meals) serviceCost += meals.price * peopleCount
+    if (meals) mealsCost = meals.price * peopleCount * days
+  }
+
+  const serviceCost = leaderCost + rescueCost + insuranceCost + mealsCost
+  const serviceBreakdown: ServiceBreakdown = {
+    leaderCost: Math.round(leaderCost),
+    rescueCost: Math.round(rescueCost),
+    insuranceCost: Math.round(insuranceCost),
+    mealsCost: Math.round(mealsCost),
   }
 
   const routeBase = route.basePrice.min * peopleCount
@@ -67,6 +78,7 @@ export function calculateQuote(
     hotelCost: Math.round(hotelCost),
     ticketCost: Math.round(ticketCost),
     serviceCost: Math.round(serviceCost),
+    serviceBreakdown,
     otherCost: Math.round(routeBase * 0.5 + transportCost),
     profit: Math.round(profit),
     totalMin,
