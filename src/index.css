@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial,
+    sans-serif;
+  background: #f1f5f9;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+@layer components {
+  .btn-primary {
+    @apply px-5 py-2.5 bg-brand-600 text-white font-medium rounded-lg hover:bg-brand-700 active:bg-brand-800 transition-colors shadow-sm disabled:bg-brand-300 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply px-5 py-2.5 bg-white text-slate-700 font-medium rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm;
+  }
+  .btn-warm {
+    @apply px-5 py-2.5 bg-warm-500 text-white font-medium rounded-lg hover:bg-warm-600 active:bg-warm-700 transition-colors shadow-sm;
+  }
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-slate-200/80;
+  }
+  .input-base {
+    @apply w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all;
+  }
+  .label-base {
+    @apply block text-sm font-medium text-slate-700 mb-1.5;
+  }
+}
