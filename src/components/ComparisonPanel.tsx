@@ -1,4 +1,5 @@
-import type { CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan } from '@/types'
+import { useState } from 'react'
+import type { CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan, DailyPlan } from '@/types'
 import { hotelOptions, hotelLevelLabels, ticketPackages, extraServices } from '@/data/options'
 import { formatMoney } from '@/utils/quote'
 
@@ -12,12 +13,23 @@ interface Props {
   quote: QuoteResult
   onNext: () => void
   onBack: () => void
+  onUpdateDailyPlan: (routeId: string, dayIndex: number, updates: Partial<DailyPlan>) => void
+  onResetRoute: (routeId: string) => void
+  isRouteEdited: boolean
 }
 
 export function ComparisonPanel(props: Props) {
-  const { routes, selectedRouteId, setSelectedRouteId, requirement, quoteConfig, setQuoteConfig, quote, onNext, onBack } = props
+  const {
+    routes, selectedRouteId, setSelectedRouteId, requirement,
+    quoteConfig, setQuoteConfig, quote, onNext, onBack,
+    onUpdateDailyPlan, onResetRoute, isRouteEdited,
+  } = props
+
   const selectedRoute = routes.find(r => r.id === selectedRouteId) || routes[0]
   const isOverBudget = quote.totalMax > requirement.totalBudget * 1.05
+
+  const [editingDay, setEditingDay] = useState<number | null>(null)
+  const [editForm, setEditForm] = useState<Partial<DailyPlan>>({})
 
   const toggleTicket = (id: string) => {
     const exists = quoteConfig.selectedTickets.includes(id)
@@ -27,8 +39,57 @@ export function ComparisonPanel(props: Props) {
     })
   }
 
+  const openEditDay = (dayIndex: number) => {
+    const day = selectedRoute.dailyPlans[dayIndex]
+    setEditForm({
+      title: day.title,
+      stayCity: day.stayCity,
+      hotelName: day.hotelName,
+      driveDistance: day.driveDistance,
+      driveDuration: day.driveDuration,
+      highlights: [...day.highlights],
+    })
+    setEditingDay(dayIndex)
+  }
+
+  const closeEditDay = () => {
+    setEditingDay(null)
+    setEditForm({})
+  }
+
+  const saveEditDay = () => {
+    if (editingDay === null) return
+    onUpdateDailyPlan(selectedRouteId, editingDay, editForm)
+    closeEditDay()
+  }
+
+  const addHighlight = () => {
+    const highlights = [...(editForm.highlights || []), '新体验点']
+    setEditForm({ ...editForm, highlights })
+  }
+
+  const updateHighlight = (idx: number, value: string) => {
+    const highlights = [...(editForm.highlights || [])]
+    highlights[idx] = value
+    setEditForm({ ...editForm, highlights })
+  }
+
+  const removeHighlight = (idx: number) => {
+    const highlights = [...(editForm.highlights || [])]
+    highlights.splice(idx, 1)
+    setEditForm({ ...editForm, highlights })
+  }
+
+  const peopleCount = requirement.peopleCount
+  const hotelPerPerson = Math.round(quote.hotelCost / peopleCount)
+  const ticketPerPerson = Math.round(quote.ticketCost / peopleCount)
+  const servicePerPerson = Math.round(quote.serviceCost / peopleCount)
+  const otherPerPerson = Math.round(quote.otherCost / peopleCount)
+  const profitPerPerson = Math.round(quote.profit / peopleCount)
+  const totalPerPerson = Math.round(quote.totalMin / peopleCount)
+
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col relative">
       <div className="flex-1 overflow-y-auto p-8 pb-28">
         <div className="max-w-[1300px] mx-auto space-y-6">
           <div>
@@ -63,7 +124,7 @@ export function ComparisonPanel(props: Props) {
                   <button
                     key={route.id}
                     onClick={() => setSelectedRouteId(route.id)}
-                    className={`text-left card p-0 overflow-hidden transition-all hover:-translate-y-1 ${
+                    className={`text-left card p-0 overflow-hidden transition-all hover:-translate-y-0.5 ${
                       selected ? 'ring-2 shadow-xl scale-[1.01]' : 'shadow-sm hover:shadow-lg'
                     }`}
                     style={{
@@ -149,16 +210,27 @@ export function ComparisonPanel(props: Props) {
           <div className="grid grid-cols-12 gap-5">
             <div className="col-span-8 card p-6">
               <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                    <span
-                      className="w-3 h-3 rounded-full"
-                      style={{ backgroundColor: selectedRoute.accentColor }}
-                    />
-                    {selectedRoute.name} 方案 - 每日行程
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">共 {requirement.days} 天 · 总里程 {selectedRoute.totalDriveDistance}km</p>
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-3 h-3 rounded-full"
+                    style={{ backgroundColor: selectedRoute.accentColor }}
+                  />
+                  <div>
+                    <h3 className="font-bold text-slate-800">
+                      {selectedRoute.name} 方案 - 每日行程
+                      {isRouteEdited && <span className="ml-2 text-[10px] px-2 py-0.5 bg-warm-100 text-warm-700 rounded-full font-normal">已编辑</span>}
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      共 {requirement.days} 天 · 总里程 {selectedRoute.totalDriveDistance}km · 点击可微调
+                    </p>
+                  </div>
                 </div>
+                {isRouteEdited && (
+                  <button
+                    onClick={() => onResetRoute(selectedRouteId)}
+                    className="text-xs text-slate-500 hover:text-red-500 transition"
+                  >↺ 恢复初始方案</button>
+                )}
               </div>
 
               <div className="relative">
@@ -166,23 +238,32 @@ export function ComparisonPanel(props: Props) {
                   className="absolute left-[27px] top-2 bottom-2 w-0.5"
                   style={{ backgroundColor: `${selectedRoute.accentColor}30` }}
                 />
-                <div className="space-y-4">
-                  {selectedRoute.dailyPlans.map(day => (
+                <div className="space-y-3 max-h-[calc(100vh-420px)] overflow-y-auto pr-2">
+                  {selectedRoute.dailyPlans.map((day, dayIdx) => (
                     <div key={day.day} className="relative flex gap-4 pl-0">
                       <div className="flex flex-col items-center">
                         <div
-                          className="w-[54px] h-[54px] rounded-xl flex flex-col items-center justify-center text-white font-bold shadow-sm flex-shrink-0 z-10"
+                          className="w-[54px] h-[54px] rounded-xl flex flex-col items-center justify-center text-white font-bold shadow-sm flex-shrink-0 z-10 cursor-pointer hover:scale-105 transition"
                           style={{ backgroundColor: selectedRoute.accentColor }}
+                          onClick={() => openEditDay(dayIdx)}
                         >
                           <div className="text-[10px] opacity-90">DAY</div>
                           <div className="text-lg leading-none">{day.day}</div>
                         </div>
                       </div>
 
-                      <div className="flex-1 rounded-xl bg-slate-50 hover:bg-slate-100 transition p-4">
+                      <div
+                        className="flex-1 rounded-xl bg-slate-50 hover:bg-slate-100 transition p-4 cursor-pointer group border border-transparent hover:border-brand-200"
+                        onClick={() => openEditDay(dayIdx)}
+                      >
                         <div className="flex items-start justify-between gap-3 mb-2">
                           <div className="flex-1 min-w-0">
-                            <div className="font-bold text-slate-800 text-sm">{day.title}</div>
+                            <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                              {day.title}
+                              <span className="opacity-0 group-hover:opacity-100 transition text-[10px] text-brand-600 bg-brand-50 px-1.5 py-0.5 rounded">
+                                点击编辑 ✏️
+                              </span>
+                            </div>
                             <div className="text-[11px] text-slate-500 mt-0.5">
                               📍 {day.stayCity} · 🏨 {day.hotelName}
                             </div>
@@ -249,31 +330,57 @@ export function ComparisonPanel(props: Props) {
                   </div>
                 </div>
 
-                <div className="space-y-2 text-sm mb-4">
-                  <div className="flex justify-between text-slate-600">
+                <div className="text-[11px] text-slate-500 mb-2 flex justify-between">
+                  <span>项目</span>
+                  <span className="flex gap-4">
+                    <span>总价</span>
+                    <span className="text-slate-400">人均</span>
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 text-sm mb-4">
+                  <div className="flex justify-between items-center text-slate-600 py-1">
                     <span>🏨 酒店住宿</span>
-                    <span className="font-medium text-slate-800">{formatMoney(quote.hotelCost)}</span>
+                    <span className="flex gap-6">
+                      <span className="font-medium text-slate-800">{formatMoney(quote.hotelCost)}</span>
+                      <span className="text-[11px] text-slate-400 w-16 text-right">{formatMoney(hotelPerPerson)}</span>
+                    </span>
                   </div>
-                  <div className="flex justify-between text-slate-600">
+                  <div className="flex justify-between items-center text-slate-600 py-1">
                     <span>🎫 门票组合</span>
-                    <span className="font-medium text-slate-800">{formatMoney(quote.ticketCost)}</span>
+                    <span className="flex gap-6">
+                      <span className="font-medium text-slate-800">{formatMoney(quote.ticketCost)}</span>
+                      <span className="text-[11px] text-slate-400 w-16 text-right">{formatMoney(ticketPerPerson)}</span>
+                    </span>
                   </div>
-                  <div className="flex justify-between text-slate-600">
+                  <div className="flex justify-between items-center text-slate-600 py-1">
                     <span>🛠️ 增值服务</span>
-                    <span className="font-medium text-slate-800">{formatMoney(quote.serviceCost)}</span>
+                    <span className="flex gap-6">
+                      <span className="font-medium text-slate-800">{formatMoney(quote.serviceCost)}</span>
+                      <span className="text-[11px] text-slate-400 w-16 text-right">{formatMoney(servicePerPerson)}</span>
+                    </span>
                   </div>
-                  <div className="flex justify-between text-slate-600">
+                  <div className="flex justify-between items-center text-slate-600 py-1">
                     <span>🚗 交通及其他</span>
-                    <span className="font-medium text-slate-800">{formatMoney(quote.otherCost)}</span>
+                    <span className="flex gap-6">
+                      <span className="font-medium text-slate-800">{formatMoney(quote.otherCost)}</span>
+                      <span className="text-[11px] text-slate-400 w-16 text-right">{formatMoney(otherPerPerson)}</span>
+                    </span>
                   </div>
                   <div className="h-px bg-slate-200 my-1" />
-                  <div className="flex justify-between text-slate-600">
+                  <div className="flex justify-between items-center text-slate-600 py-1">
                     <span>📊 小计</span>
-                    <span className="font-medium text-slate-800">{formatMoney(quote.subtotal)}</span>
+                    <span className="flex gap-6">
+                      <span className="font-medium text-slate-800">{formatMoney(quote.subtotal)}</span>
+                      <span className="text-[11px] text-slate-400 w-16 text-right">-</span>
+                    </span>
                   </div>
-                  <div className="flex justify-between text-slate-600">
+                  <div className="flex justify-between items-center text-slate-600 py-1">
                     <span>💵 计划利润</span>
-                    <span className="font-medium text-green-600">+{formatMoney(quote.profit)}</span>
+                    <span className="flex gap-6">
+                      <span className="font-medium text-green-600">+{formatMoney(quote.profit)}</span>
+                      <span className="text-[11px] text-green-500 w-16 text-right">{formatMoney(profitPerPerson)}</span>
+                    </span>
                   </div>
                 </div>
 
@@ -282,8 +389,9 @@ export function ComparisonPanel(props: Props) {
                   <div className="text-2xl font-bold">
                     {formatMoney(quote.totalMin)} <span className="text-lg opacity-80">~</span> {formatMoney(quote.totalMax)}
                   </div>
-                  <div className="text-[11px] text-brand-100 mt-1">
-                    人均 {formatMoney(Math.round(quote.totalMin / requirement.peopleCount))} 起
+                  <div className="flex justify-between mt-1 text-[11px]">
+                    <span className="text-brand-100">人均 {formatMoney(totalPerPerson)} 起</span>
+                    <span className="text-warm-300 font-semibold">毛利率 ~{quote.profitMargin}%</span>
                   </div>
                 </div>
 
@@ -370,10 +478,10 @@ export function ComparisonPanel(props: Props) {
                   <div className="text-xs font-semibold text-slate-700 mb-2">随车服务</div>
                   <div className="space-y-2">
                     {[
-                      { key: 'includeLeader', name: '专业随车领队', price: '¥800/天', desc: '高原经验+急救证' },
-                      { key: 'includeRescue', name: '应急救援服务', price: '¥1200全程', desc: '卫星电话+拖车' },
-                      { key: 'includeInsurance', name: '高额旅游保险', price: '¥120/人', desc: '高原专项保障' },
-                      { key: 'includeMeals', name: '全程餐饮包', price: '¥280/人/天', desc: '含特色餐体验' },
+                      { key: 'includeLeader', name: '专业随车领队', price: '¥800/天', perPerson: `¥${Math.round(800 / peopleCount)}/人/天`, desc: '高原经验+急救证' },
+                      { key: 'includeRescue', name: '应急救援服务', price: '¥1200全程', perPerson: `¥${Math.round(1200 / peopleCount)}/人`, desc: '卫星电话+拖车' },
+                      { key: 'includeInsurance', name: '高额旅游保险', price: '¥120/人', perPerson: '¥120/人', desc: '高原专项保障' },
+                      { key: 'includeMeals', name: '全程餐饮包', price: '¥280/人/天', perPerson: '¥280/人/天', desc: '含特色餐体验' },
                     ].map(s => {
                       const key = s.key as keyof QuoteConfig
                       const checked = Boolean(quoteConfig[key])
@@ -393,7 +501,10 @@ export function ComparisonPanel(props: Props) {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between gap-2">
                               <div className="text-xs font-bold text-slate-800">{s.name}</div>
-                              <div className="text-[10px] text-green-700 font-bold flex-shrink-0">{s.price}</div>
+                              <div className="text-[10px] text-green-700 font-bold flex-shrink-0 text-right">
+                                <div>{s.price}</div>
+                                <div className="text-green-500 font-normal">{s.perPerson}</div>
+                              </div>
                             </div>
                             <div className="text-[10px] text-slate-500 mt-0.5">{s.desc}</div>
                           </div>
@@ -459,6 +570,7 @@ export function ComparisonPanel(props: Props) {
             <div className="text-xs text-slate-500">已选择方案</div>
             <div className="text-sm font-bold text-slate-800">
               <span style={{ color: selectedRoute.accentColor }}>●</span> {selectedRoute.name}方案 · {requirement.days}天{requirement.days-1}晚
+              {isRouteEdited && <span className="ml-2 text-[10px] text-warm-600">（已微调）</span>}
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -475,6 +587,129 @@ export function ComparisonPanel(props: Props) {
           </div>
         </div>
       </div>
+
+      {editingDay !== null && editForm && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-30 flex items-center justify-center p-6" onClick={closeEditDay}>
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-hidden flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-brand-50 to-white">
+              <div>
+                <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                  <span className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm font-bold"
+                    style={{ backgroundColor: selectedRoute.accentColor }}
+                  >
+                    D{selectedRoute.dailyPlans[editingDay]?.day}
+                  </span>
+                  微调第 {selectedRoute.dailyPlans[editingDay]?.day} 天行程
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">修改后将同步更新到方案预览和导出的路书中</p>
+              </div>
+              <button onClick={closeEditDay} className="text-slate-400 hover:text-slate-600 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">
+                ×
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div>
+                <label className="label-base">行程标题</label>
+                <input
+                  type="text"
+                  className="input-base"
+                  value={editForm.title || ''}
+                  onChange={e => setEditForm({ ...editForm, title: e.target.value })}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label-base">住宿城市</label>
+                  <input
+                    type="text"
+                    className="input-base"
+                    value={editForm.stayCity || ''}
+                    onChange={e => setEditForm({ ...editForm, stayCity: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="label-base">酒店名称</label>
+                  <input
+                    type="text"
+                    className="input-base"
+                    value={editForm.hotelName || ''}
+                    onChange={e => setEditForm({ ...editForm, hotelName: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label-base">车程距离（km）</label>
+                  <input
+                    type="number"
+                    className="input-base"
+                    value={editForm.driveDistance || 0}
+                    onChange={e => setEditForm({ ...editForm, driveDistance: Number(e.target.value) || 0 })}
+                  />
+                </div>
+                <div>
+                  <label className="label-base">车程时长</label>
+                  <input
+                    type="text"
+                    className="input-base"
+                    placeholder="如：3.5h"
+                    value={editForm.driveDuration || ''}
+                    onChange={e => setEditForm({ ...editForm, driveDuration: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="label-base mb-0">核心体验点</label>
+                  <button
+                    onClick={addHighlight}
+                    className="text-xs text-brand-600 hover:text-brand-700 font-medium"
+                  >+ 添加体验点</button>
+                </div>
+                <div className="space-y-2">
+                  {(editForm.highlights || []).map((h, idx) => (
+                    <div key={idx} className="flex gap-2">
+                      <input
+                        type="text"
+                        className="input-base flex-1"
+                        value={h}
+                        onChange={e => updateHighlight(idx, e.target.value)}
+                      />
+                      <button
+                        onClick={() => removeHighlight(idx)}
+                        className="px-3 text-red-500 hover:bg-red-50 rounded-lg border border-red-100"
+                      >删除</button>
+                    </div>
+                  ))}
+                  {(editForm.highlights || []).length === 0 && (
+                    <div className="text-xs text-slate-400 text-center py-3 bg-slate-50 rounded-lg">
+                      暂无体验点，点击上方「添加体验点」按钮新增
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+              <button
+                onClick={() => onResetRoute(selectedRouteId)}
+                className="text-xs text-slate-500 hover:text-red-500"
+              >↺ 恢复这一天的原始内容</button>
+              <div className="flex gap-3">
+                <button className="btn-secondary" onClick={closeEditDay}>取消</button>
+                <button className="btn-primary" onClick={saveEditDay}>✓ 保存修改</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

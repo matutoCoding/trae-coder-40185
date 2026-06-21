@@ -1,11 +1,18 @@
-import { useState, useMemo } from 'react'
-import type { AppStep, CustomerRequirement, QuoteConfig, RoutePlan, BrandConfig, QuoteResult } from '@/types'
+import { useState, useMemo, useCallback, useEffect } from 'react'
+import type { AppStep, CustomerRequirement, QuoteConfig, RoutePlan, BrandConfig, QuoteResult, DailyPlan } from '@/types'
 import { generateRoutePlans } from '@/data/routes'
 import { calculateQuote } from '@/utils/quote'
 import { StepHeader } from '@/components/StepHeader'
 import { RequirementPanel } from '@/components/RequirementPanel'
 import { ComparisonPanel } from '@/components/ComparisonPanel'
 import { ExportPanel } from '@/components/ExportPanel'
+
+const STORAGE_KEYS = {
+  quoteConfig: 'lushu_quote_config',
+  brandConfig: 'lushu_brand_config',
+  requirement: 'lushu_requirement',
+  editedRoutes: 'lushu_edited_routes',
+}
 
 const defaultRequirement: CustomerRequirement = {
   peopleCount: 4,
@@ -32,6 +39,26 @@ const defaultQuoteConfig: QuoteConfig = {
   profitMargin: 15,
 }
 
+function loadFromStorage<T>(key: string, defaultValue: T): T {
+  try {
+    const saved = localStorage.getItem(key)
+    if (saved) {
+      return JSON.parse(saved) as T
+    }
+  } catch {
+    // ignore
+  }
+  return defaultValue
+}
+
+function saveToStorage<T>(key: string, value: T) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // ignore
+  }
+}
+
 const defaultBrand: BrandConfig = {
   agencyName: '星空国际旅行社',
   agencyLogo: '',
@@ -46,15 +73,42 @@ const defaultBrand: BrandConfig = {
 
 export default function App() {
   const [step, setStep] = useState<AppStep>('requirement')
-  const [requirement, setRequirement] = useState<CustomerRequirement>(defaultRequirement)
-  const [quoteConfig, setQuoteConfig] = useState<QuoteConfig>(defaultQuoteConfig)
+  const [requirement, setRequirement] = useState<CustomerRequirement>(() => loadFromStorage(STORAGE_KEYS.requirement, defaultRequirement))
+  const [quoteConfig, setQuoteConfig] = useState<QuoteConfig>(() => loadFromStorage(STORAGE_KEYS.quoteConfig, defaultQuoteConfig))
   const [selectedRouteId, setSelectedRouteId] = useState<string>('classic')
-  const [brand, setBrand] = useState<BrandConfig>(defaultBrand)
+  const [brand, setBrand] = useState<BrandConfig>(() => loadFromStorage(STORAGE_KEYS.brandConfig, defaultBrand))
+  const [editedRoutes, setEditedRoutes] = useState<Record<string, RoutePlan>>(() => loadFromStorage(STORAGE_KEYS.editedRoutes, {}))
 
-  const routes = useMemo(
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.requirement, requirement)
+  }, [requirement])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.quoteConfig, quoteConfig)
+  }, [quoteConfig])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.brandConfig, brand)
+  }, [brand])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.editedRoutes, editedRoutes)
+  }, [editedRoutes])
+
+  const baseRoutes = useMemo(
     () => generateRoutePlans(requirement.days, requirement.destination, requirement.includeHiddenGems),
     [requirement.days, requirement.destination, requirement.includeHiddenGems],
   )
+
+  const routes = useMemo<RoutePlan[]>(() => {
+    return baseRoutes.map(route => {
+      const edited = editedRoutes[route.id]
+      if (edited && edited.dailyPlans.length === route.dailyPlans.length) {
+        return edited
+      }
+      return route
+    })
+  }, [baseRoutes, editedRoutes])
 
   const selectedRoute = useMemo(
     () => routes.find(r => r.id === selectedRouteId) || routes[0],
@@ -68,9 +122,41 @@ export default function App() {
 
   const canGoComparison = requirement.days >= 3 && requirement.peopleCount >= 1
 
+  const updateDailyPlan = useCallback((routeId: string, dayIndex: number, updates: Partial<DailyPlan>) => {
+    setEditedRoutes(prev => {
+      const route = routes.find(r => r.id === routeId)
+      if (!route) return prev
+      const current = prev[routeId] || route
+      const newPlans = [...current.dailyPlans]
+      newPlans[dayIndex] = { ...newPlans[dayIndex], ...updates }
+      const totalDist = newPlans.reduce((s, d) => s + d.driveDistance, 0)
+      const updated = { ...current, dailyPlans: newPlans, totalDriveDistance: Math.round(totalDist) }
+      return { ...prev, [routeId]: updated }
+    })
+  }, [routes])
+
+  const resetRouteEdits = useCallback((routeId: string) => {
+    setEditedRoutes(prev => {
+      const next = { ...prev }
+      delete next[routeId]
+      return next
+    })
+  }, [])
+
+  const handleRouteChange = useCallback((id: string) => {
+    setSelectedRouteId(id)
+  }, [])
+
   return (
     <div className="h-full flex flex-col bg-slate-50">
-      <StepHeader step={step} setStep={setStep} canGoComparison={canGoComparison} />
+      <StepHeader
+        step={step}
+        setStep={setStep}
+        canGoComparison={canGoComparison}
+        customerName={requirement.customerName}
+        peopleCount={requirement.peopleCount}
+        destination={requirement.destination}
+      />
       <main className="flex-1 overflow-hidden">
         {step === 'requirement' && (
           <RequirementPanel
@@ -85,13 +171,16 @@ export default function App() {
           <ComparisonPanel
             routes={routes}
             selectedRouteId={selectedRouteId}
-            setSelectedRouteId={setSelectedRouteId}
+            setSelectedRouteId={handleRouteChange}
             requirement={requirement}
             quoteConfig={quoteConfig}
             setQuoteConfig={setQuoteConfig}
             quote={quote}
             onNext={() => setStep('export')}
             onBack={() => setStep('requirement')}
+            onUpdateDailyPlan={updateDailyPlan}
+            onResetRoute={resetRouteEdits}
+            isRouteEdited={!!editedRoutes[selectedRouteId]}
           />
         )}
         {step === 'export' && (

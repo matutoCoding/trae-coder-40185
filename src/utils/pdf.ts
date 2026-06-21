@@ -1,8 +1,7 @@
+import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'
 import type { BrandConfig, CustomerRequirement, QuoteConfig, RoutePlan, QuoteResult } from '@/types'
 import { hotelLevelLabels, ticketPackages } from '@/data/options'
-import { getHotelLevelName } from '@/utils/quote'
 
 export async function generatePDF(
   brand: BrandConfig,
@@ -12,335 +11,446 @@ export async function generatePDF(
   quote: QuoteResult,
   filename: string
 ): Promise<boolean> {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
-  const pageWidth = doc.internal.pageSize.getWidth()
-  const pageHeight = doc.internal.pageSize.getHeight()
-  const margin = 15
+  const container = document.createElement('div')
+  container.style.position = 'fixed'
+  container.style.left = '-9999px'
+  container.style.top = '0'
+  container.style.width = '794px'
+  container.style.zIndex = '-1'
+  container.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif'
+  document.body.appendChild(container)
 
-  drawCover(doc, brand, requirement, route, pageWidth, pageHeight, margin)
+  try {
+    const pages = buildPDFPages(brand, requirement, route, config, quote)
+    container.innerHTML = pages
 
-  doc.addPage()
-  drawHeader(doc, brand, pageWidth, margin)
-  drawItineraryInfo(doc, requirement, route, margin)
-  drawDailyPlans(doc, route, pageWidth, margin)
+    const pageElements = container.querySelectorAll('.pdf-page')
+    const canvasList: HTMLCanvasElement[] = []
 
-  doc.addPage()
-  drawHeader(doc, brand, pageWidth, margin)
-  drawQuoteSection(doc, requirement, route, config, quote, margin)
+    for (let i = 0; i < pageElements.length; i++) {
+      const canvas = await html2canvas(pageElements[i] as HTMLElement, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+      })
+      canvasList.push(canvas)
+    }
 
-  doc.addPage()
-  drawHeader(doc, brand, pageWidth, margin)
-  drawNotes(doc, margin, pageHeight)
+    const pdf = new jsPDF('p', 'mm', 'a4')
+    const pageWidth = pdf.internal.pageSize.getWidth()
+    const pageHeight = pdf.internal.pageSize.getHeight()
 
-  doc.addPage()
-  drawHeader(doc, brand, pageWidth, margin)
-  drawMapSection(doc, route, pageWidth, margin, pageHeight)
+    canvasList.forEach((canvas, idx) => {
+      if (idx > 0) pdf.addPage()
+      const imgData = canvas.toDataURL('image/jpeg', 0.95)
+      pdf.addImage(imgData, 'JPEG', 0, 0, pageWidth, pageHeight)
+    })
 
-  const buffer = doc.output('arraybuffer')
+    const buffer = pdf.output('arraybuffer')
 
-  if (window.lushuAPI && window.lushuAPI.savePDF) {
-    const result = await window.lushuAPI.savePDF(filename, buffer)
-    return result.success
+    if (window.lushuAPI && window.lushuAPI.savePDF) {
+      const result = await window.lushuAPI.savePDF(filename, buffer)
+      return result.success
+    }
+
+    const blob = new Blob([buffer], { type: 'application/pdf' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    return true
+  } finally {
+    document.body.removeChild(container)
   }
-
-  const blob = new Blob([buffer], { type: 'application/pdf' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-  return true
 }
 
-function drawCover(
-  doc: jsPDF,
+function buildPDFPages(
   brand: BrandConfig,
   requirement: CustomerRequirement,
   route: RoutePlan,
-  pageWidth: number,
-  pageHeight: number,
-  margin: number
-) {
-  doc.setFillColor(30, 64, 175)
-  doc.rect(0, 0, pageWidth, pageHeight, 'F')
+  config: QuoteConfig,
+  quote: QuoteResult
+): string {
+  const selectedTickets = config.selectedTickets
+    .map(id => ticketPackages.find(t => t.id === id)?.name)
+    .filter(Boolean)
+    .join('、')
 
-  doc.setFillColor(59, 130, 246)
-  doc.circle(pageWidth * 0.8, pageHeight * 0.15, 40, 'F')
-  doc.setFillColor(96, 165, 250)
-  doc.circle(pageWidth * 0.15, pageHeight * 0.85, 30, 'F')
+  const dailyChunks = chunkDailyPlans(route.dailyPlans)
+  const totalPages = 4 + dailyChunks.length + 2
 
-  doc.setTextColor(255, 255, 255)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(28)
-  doc.text(brand.agencyName || '星空旅行社', margin, pageHeight * 0.2)
+  const pages: string[] = []
 
-  if (brand.slogan) {
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(11)
-    doc.text(brand.slogan, margin, pageHeight * 0.2 + 8)
-  }
+  pages.push(buildCoverPage(brand, requirement, route, 1, totalPages))
+  pages.push(buildOverviewPage(brand, requirement, route, 2, totalPages))
 
-  doc.setFontSize(12)
-  doc.setFont('helvetica', 'normal')
-  doc.text('定 制 自 驾 旅 游 方 案', margin, pageHeight * 0.35)
-
-  doc.setFontSize(36)
-  doc.setFont('helvetica', 'bold')
-  const destText = requirement.destination || '川西秘境'
-  doc.text(destText, margin, pageHeight * 0.42)
-
-  doc.setFontSize(18)
-  doc.setFont('helvetica', 'normal')
-  doc.text(`${requirement.days}天${requirement.days - 1}晚 · ${route.name}行程`, margin, pageHeight * 0.48)
-
-  doc.setFillColor(245, 158, 11)
-  doc.rect(margin, pageHeight * 0.52, 50, 1, 'F')
-
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'normal')
-  const infoItems = [
-    `客户姓名：${requirement.customerName || '尊贵客户'}`,
-    `出行人数：${requirement.peopleCount}人`,
-    `出团日期：${requirement.travelDate || '待定'}`,
-    `行程类型：${route.name} ${route.tagline}`,
-  ]
-  infoItems.forEach((item, i) => {
-    doc.text(item, margin, pageHeight * 0.58 + i * 7)
+  dailyChunks.forEach((chunk, idx) => {
+    pages.push(buildDailyPage(brand, route, chunk, 3 + idx, totalPages))
   })
 
-  doc.setFontSize(10)
-  doc.setTextColor(191, 219, 254)
-  const bottomY = pageHeight - margin - 20
-  const contactItems = [
-    `顾问：${brand.consultantName || '定制游顾问'}`,
-    `职务：${brand.consultantTitle || '高级定制师'}`,
-    `电话：${brand.consultantPhone || '138-0000-0000'}`,
-    `微信：${brand.consultantWechat || 'lushu_consultant'}`,
-  ]
-  contactItems.forEach((item, i) => {
-    doc.text(item, margin, bottomY + i * 5)
-  })
+  const quotePageNum = 3 + dailyChunks.length
+  pages.push(buildQuotePage(brand, requirement, route, config, quote, selectedTickets, quotePageNum, totalPages))
+  pages.push(buildNotesPage(brand, quotePageNum + 1, totalPages))
+  pages.push(buildMapPage(brand, route, quotePageNum + 2, totalPages))
 
-  if (brand.agencyAddress) {
-    doc.text(`地址：${brand.agencyAddress}`, pageWidth * 0.45, bottomY + 5)
-  }
-  if (brand.agencyWebsite) {
-    doc.text(`官网：${brand.agencyWebsite}`, pageWidth * 0.45, bottomY + 10)
-  }
-
-  doc.setFontSize(9)
-  doc.setTextColor(147, 197, 253)
-  doc.text('本方案由路书制作工具自动生成，最终解释权归本社所有', pageWidth / 2, pageHeight - 8, {
-    align: 'center',
-  })
+  return pages.map(html => `<div class="pdf-page" style="width:794px;min-height:1123px;background:#fff;position:relative;overflow:hidden;box-sizing:border-box;">${html}</div>`).join('')
 }
 
-function drawHeader(doc: jsPDF, brand: BrandConfig, pageWidth: number, margin: number) {
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(14)
-  doc.setTextColor(30, 64, 175)
-  doc.text(brand.agencyName || '星空旅行社', margin, 12)
+function chunkDailyPlans(plans: any[]) {
+  const chunks: any[][] = []
+  let current: any[] = []
+  let currentHeight = 0
 
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(107, 114, 128)
-  const contact = `${brand.consultantName || '定制师'} | ${brand.consultantPhone || '138-0000-0000'}`
-  doc.text(contact, pageWidth - margin, 12, { align: 'right' })
+  const headerHeight = 120
+  const footerHeight = 40
+  const pageAvailable = 1123 - headerHeight - footerHeight - 60
+  const baseRowHeight = 95
 
-  doc.setDrawColor(219, 234, 254)
-  doc.line(margin, 17, pageWidth - margin, 17)
+  plans.forEach(plan => {
+    const highlightLines = Math.ceil(plan.highlights.length / 2)
+    const rowHeight = baseRowHeight + (highlightLines - 1) * 18
+
+    if (currentHeight + rowHeight > pageAvailable && current.length > 0) {
+      chunks.push(current)
+      current = []
+      currentHeight = 0
+    }
+    current.push(plan)
+    currentHeight += rowHeight
+  })
+
+  if (current.length > 0) chunks.push(current)
+  return chunks
 }
 
-function drawItineraryInfo(
-  doc: jsPDF,
-  requirement: CustomerRequirement,
-  route: RoutePlan,
-  margin: number
-) {
-  doc.setFontSize(16)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(17, 24, 39)
-  doc.text('一、行程概览', margin, 32)
-
-  const infoData = [
-    ['目的地', requirement.destination || '川西环线', '行程类型', route.name],
-    ['出行天数', `${requirement.days}天${requirement.days - 1}晚`, '出行人数', `${requirement.peopleCount}人`],
-    ['交通方式', requirement.transportType === 'rental' ? '租车自驾' : '自带车自驾', '总里程', `${route.totalDriveDistance}km`],
-    ['酒店等级', getHotelLevelName(requirement.hotelLevel), '出团日期', requirement.travelDate || '待定'],
-  ]
-
-  autoTable(doc, {
-    startY: 40,
-    body: infoData,
-    styles: { cellPadding: 5, fontSize: 10 },
-    columnStyles: {
-      0: { cellWidth: 25, fillColor: [239, 246, 255], textColor: [30, 64, 175], fontStyle: 'bold' },
-      1: { cellWidth: 65 },
-      2: { cellWidth: 25, fillColor: [239, 246, 255], textColor: [30, 64, 175], fontStyle: 'bold' },
-      3: { cellWidth: 65 },
-    },
-    didDrawCell: () => {},
-  })
-
-  const yAfter = (doc as any).lastAutoTable.finalY + 12
-  doc.setFontSize(12)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(17, 24, 39)
-  doc.text('行程亮点', margin, yAfter)
-
-  doc.setFontSize(10)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(75, 85, 99)
-  route.highlights.forEach((h, i) => {
-    doc.setFillColor(251, 191, 36)
-    doc.circle(margin + 3, yAfter + 8 + i * 7, 2, 'F')
-    doc.text(h, margin + 10, yAfter + 9 + i * 7)
-  })
+function pageHeader(brand: BrandConfig, title: string) {
+  return `
+    <div style="padding:20px 30px 12px;border-bottom:2px solid #e0e7ff;display:flex;justify-content:space-between;align-items:center;background:linear-gradient(to right, #f8fafc, #fff);">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg, #3b82f6, #1e3a8a);display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:18px;">🚗</div>
+        <div>
+          <div style="font-size:14px;font-weight:bold;color:#1e3a8a;">${brand.agencyName || '旅行社'}</div>
+          <div style="font-size:10px;color:#64748b;">${brand.slogan || ''}</div>
+        </div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:11px;color:#475569;font-weight:600;">${title}</div>
+        <div style="font-size:9px;color:#94a3b8;">${brand.consultantName} · ${brand.consultantPhone}</div>
+      </div>
+    </div>
+  `
 }
 
-function drawDailyPlans(doc: jsPDF, route: RoutePlan, pageWidth: number, margin: number) {
-  const startY = 160
-  doc.setFontSize(16)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(17, 24, 39)
-  doc.text('二、每日行程', margin, startY)
-
-  const bodyData: any[] = []
-  route.dailyPlans.forEach(day => {
-    bodyData.push([
-      `第${day.day}天\n${day.driveDuration} · ${day.driveDistance}km`,
-      `${day.title}\n住宿：${day.stayCity} ${day.hotelName}`,
-      day.highlights.join('、'),
-    ])
-  })
-
-  autoTable(doc, {
-    startY: startY + 8,
-    head: [['日期/车程', '行程概要', '核心体验']],
-    body: bodyData,
-    styles: { cellPadding: 5, fontSize: 9, valign: 'top' },
-    headStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: 'bold' },
-    columnStyles: {
-      0: { cellWidth: 28, fontStyle: 'bold', textColor: [30, 64, 175] },
-      1: { cellWidth: 70 },
-      2: { cellWidth: 69 },
-    },
-  })
+function pageFooter(brand: BrandConfig, pageNum: number, total: number) {
+  return `
+    <div style="position:absolute;bottom:0;left:0;right:0;padding:12px 30px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;font-size:9px;color:#94a3b8;background:#f8fafc;">
+      <span>${brand.agencyName || ''} · ${brand.agencyAddress || ''}</span>
+      <span>第 ${pageNum} / ${total} 页</span>
+    </div>
+  `
 }
 
-function drawQuoteSection(
-  doc: jsPDF,
+function buildCoverPage(brand: BrandConfig, requirement: CustomerRequirement, route: RoutePlan, pageNum: number, totalPages: number) {
+  return `
+    <div style="width:100%;height:100%;background:linear-gradient(135deg, #1e3a8a 0%, #3b82f6 60%, #60a5fa 100%);position:relative;overflow:hidden;">
+      <div style="position:absolute;right:-60px;top:-60px;width:240px;height:240px;border-radius:50%;background:rgba(255,255,255,0.1);"></div>
+      <div style="position:absolute;left:-40px;bottom:-40px;width:180px;height:180px;border-radius:50%;background:rgba(255,255,255,0.08);"></div>
+      <div style="position:absolute;right:20%;bottom:20%;width:80px;height:80px;border-radius:50%;background:rgba(251,191,36,0.25);"></div>
+
+      <div style="padding:80px 60px 60px;color:white;position:relative;z-index:10;height:100%;box-sizing:border-box;display:flex;flex-direction:column;">
+        <div style="font-size:22px;font-weight:bold;margin-bottom:6px;letter-spacing:1px;">${brand.agencyName || '旅行社'}</div>
+        <div style="font-size:11px;opacity:80%;margin-bottom:60px;">${brand.slogan || ''}</div>
+
+        <div style="font-size:12px;opacity:85%;letter-spacing:4px;margin-bottom:16px;">定 制 自 驾 旅 游 方 案</div>
+
+        <div style="font-size:44px;font-weight:bold;line-height:1.2;margin-bottom:14px;letter-spacing:2px;text-shadow:0 2px 8px rgba(0,0,0,0.2);">
+          ${requirement.destination || '川西秘境'}
+        </div>
+
+        <div style="font-size:18px;font-weight:300;margin-bottom:40px;opacity:95%;">
+          ${requirement.days}天${requirement.days - 1}晚 · ${route.name}行程
+        </div>
+
+        <div style="width:70px;height:4px;background:#fbbf24;border-radius:2px;margin-bottom:36px;"></div>
+
+        <div style="font-size:13px;line-height:2;opacity:95%;">
+          <div style="margin-bottom:4px;">客户姓名：${requirement.customerName || '尊贵客户'}</div>
+          <div style="margin-bottom:4px;">出行人数：${requirement.peopleCount}人</div>
+          <div style="margin-bottom:4px;">出团日期：${requirement.travelDate || '待定'}</div>
+          <div style="margin-bottom:4px;">行程类型：${route.name} · ${route.tagline}</div>
+        </div>
+
+        <div style="flex:1;"></div>
+
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;padding-top:40px;border-top:1px solid rgba(255,255,255,0.2);">
+          <div style="font-size:11px;line-height:1.8;opacity:90%;">
+            <div>定制顾问：${brand.consultantName || ''}</div>
+            <div>职　　位：${brand.consultantTitle || ''}</div>
+            <div>联系电话：${brand.consultantPhone || ''}</div>
+            <div>微　　信：${brand.consultantWechat || ''}</div>
+          </div>
+          <div style="text:right;font-size:10px;line-height:1.8;opacity:80%;">
+            ${brand.agencyAddress ? `<div>${brand.agencyAddress}</div>` : ''}
+            ${brand.agencyWebsite ? `<div>${brand.agencyWebsite}</div>` : ''}
+          </div>
+        </div>
+
+        <div style="text-align:center;font-size:9px;opacity:60%;margin-top:30px;">
+          第 ${pageNum} / ${totalPages} 页 · 本方案由路书制作工具自动生成 · 最终解释权归本社所有
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function buildOverviewPage(brand: BrandConfig, requirement: CustomerRequirement, route: RoutePlan, pageNum: number, totalPages: number) {
+  return `
+    <div style="padding:0;position:relative;height:100%;box-sizing:border-box;">
+      ${pageHeader(brand, '一、行程概览')}
+
+      <div style="padding:24px 30px;">
+        <div style="background:#f0f9ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
+          <div style="font-size:15px;font-weight:bold;color:#1e40af;margin-bottom:10px;">
+            行程主题：${route.name} · ${route.tagline}
+          </div>
+          <div style="font-size:11px;color:#3b82f6;line-height:1.7;">
+            ${route.description}
+          </div>
+        </div>
+
+        <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:20px;">
+          <tbody>
+            <tr style="background:#f8fafc;">
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;background:#eff6ff;color:#1e40af;font-weight:bold;width:20%;">目的地</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;">${requirement.destination || '川西环线'}</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;background:#eff6ff;color:#1e40af;font-weight:bold;width:20%;">行程天数</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;">${requirement.days}天${requirement.days - 1}晚</td>
+            </tr>
+            <tr>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;background:#eff6ff;color:#1e40af;font-weight:bold;">出行人数</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;">${requirement.peopleCount}人</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;background:#eff6ff;color:#1e40af;font-weight:bold;">总里程</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;">${route.totalDriveDistance}km</td>
+            </tr>
+            <tr style="background:#f8fafc;">
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;background:#eff6ff;color:#1e40af;font-weight:bold;">交通方式</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;">${requirement.transportType === 'rental' ? '租车自驾' : '自带车辆'}</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;background:#eff6ff;color:#1e40af;font-weight:bold;">出团日期</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;">${requirement.travelDate || '待定'}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div style="margin-bottom:20px;">
+          <div style="font-size:13px;font-weight:bold;color:#0f172a;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+            <span style="width:4px;height:14px;background:#3b82f6;border-radius:2px;"></span>
+            行程亮点
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            ${route.highlights.map((h, i) => `
+              <div style="display:flex;align-items:flex-start;gap:6px;font-size:11px;color:#475569;">
+                <span style="color:${route.accentColor};font-weight:bold;">•</span>
+                <span>${h}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size:13px;font-weight:bold;color:#0f172a;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+            <span style="width:4px;height:14px;background:${route.accentColor};border-radius:2px;"></span>
+            可能的超预算项
+          </div>
+          <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;">
+            ${route.potentialOverBudget.map((item, i) => `
+              <div style="font-size:11px;color:#92400e;margin-bottom:4px;">⚠️ ${item}</div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+
+      ${pageFooter(brand, pageNum, totalPages)}
+    </div>
+  `
+}
+
+function buildDailyPage(brand: BrandConfig, route: RoutePlan, dailyPlans: any[], pageNum: number, totalPages: number) {
+  return `
+    <div style="padding:0;position:relative;height:100%;box-sizing:border-box;">
+      ${pageHeader(brand, '二、每日行程安排')}
+
+      <div style="padding:20px 30px;">
+        <div style="position:relative;">
+          <div style="position:absolute;left:26px;top:10px;bottom:10px;width:2px;background:${route.accentColor}30;border-radius:1px;"></div>
+
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            ${dailyPlans.map(day => `
+              <div style="display:flex;gap:14px;position:relative;">
+                <div style="width:52px;height:52px;border-radius:10px;background:${route.accentColor};color:white;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;z-index:5;box-shadow:0 2px 6px rgba(0,0,0,0.15);">
+                  <div style="font-size:9px;opacity:85%;">DAY</div>
+                  <div style="font-size:18px;font-weight:bold;line-height:1;">${day.day}</div>
+                </div>
+
+                <div style="flex:1;background:#fafafa;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+                    <div>
+                      <div style="font-size:12px;font-weight:bold;color:#0f172a;margin-bottom:3px;">${day.title}</div>
+                      <div style="font-size:10px;color:#64748b;">
+                        📍 ${day.stayCity}　🏨 ${day.hotelName}
+                      </div>
+                    </div>
+                    <div style="display:flex;gap:6px;flex-shrink:0;">
+                      <span style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:3px 8px;font-size:10px;color:#475569;">
+                        🚗 ${day.driveDuration}
+                      </span>
+                      <span style="background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:3px 8px;font-size:10px;color:#475569;">
+                        📏 ${day.driveDistance}km
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">
+                    ${day.highlights.map((h: string, i: number) => `
+                      <span style="background:${route.accentColor}15;color:${route.accentColor};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:500;">
+                        ${h}
+                      </span>
+                    `).join('')}
+                  </div>
+
+                  ${day.overBudgetRisk ? `
+                    <div style="margin-top:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;font-size:10px;color:#92400e;">
+                      ⚠️ ${day.overBudgetRisk}
+                    </div>
+                  ` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+
+      ${pageFooter(brand, pageNum, totalPages)}
+    </div>
+  `
+}
+
+function buildQuotePage(
+  brand: BrandConfig,
   requirement: CustomerRequirement,
   route: RoutePlan,
   config: QuoteConfig,
   quote: QuoteResult,
-  margin: number
+  selectedTickets: string,
+  pageNum: number,
+  totalPages: number
 ) {
-  doc.setFontSize(16)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(17, 24, 39)
-  doc.text('三、费用说明', margin, 32)
+  return `
+    <div style="padding:0;position:relative;height:100%;box-sizing:border-box;">
+      ${pageHeader(brand, '三、费用说明')}
 
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(30, 64, 175)
-  doc.text('3.1 费用明细', margin, 44)
+      <div style="padding:24px 30px;">
+        <div style="background:linear-gradient(135deg, #1e3a8a, #3b82f6);border-radius:12px;padding:20px 24px;color:white;margin-bottom:20px;box-shadow:0 4px 12px rgba(30,64,175,0.2);">
+          <div style="font-size:11px;opacity:80%;margin-bottom:6px;">建议报价区间（${requirement.peopleCount}人）</div>
+          <div style="font-size:28px;font-weight:bold;letter-spacing:1px;">
+            ¥${quote.totalMin.toLocaleString()}
+            <span style="font-size:16px;opacity:70%;margin:0 8px;">~</span>
+            ¥${quote.totalMax.toLocaleString()}
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;margin-top:8px;">
+            <span style="opacity:80;">人均 ¥${Math.round(quote.totalMin / requirement.peopleCount).toLocaleString()} 起</span>
+            <span style="color:#fcd34d;font-weight:bold;">毛利率约 ${quote.profitMargin}%</span>
+          </div>
+        </div>
 
-  const breakdownData = [
-    ['酒店住宿', `${hotelLevelLabels[config.selectedHotelLevel]} × ${requirement.days - 1}晚`, `¥${quote.hotelCost.toLocaleString()}`],
-    ['门票组合', config.selectedTickets.map(id => {
-      const t = ticketPackages.find(x => x.id === id)
-      return t ? t.name : ''
-    }).filter(Boolean).join('、') || '客户自理', `¥${quote.ticketCost.toLocaleString()}`],
-    ['增值服务', [
-      config.includeLeader ? '专业领队' : '',
-      config.includeRescue ? '救援服务' : '',
-      config.includeInsurance ? '保险' : '',
-      config.includeMeals ? '餐饮包' : '',
-    ].filter(Boolean).join('、') || '无', `¥${quote.serviceCost.toLocaleString()}`],
-    ['交通及其他', requirement.transportType === 'rental' ? '租车费用' : '车辆服务', `¥${quote.otherCost.toLocaleString()}`],
-    ['计划利润', `${config.profitMargin}%`, `¥${quote.profit.toLocaleString()}`],
-  ]
+        <div style="font-size:13px;font-weight:bold;color:#0f172a;margin-bottom:12px;">
+          3.1 费用明细
+        </div>
 
-  autoTable(doc, {
-    startY: 52,
-    body: breakdownData,
-    styles: { cellPadding: 5, fontSize: 10 },
-    columnStyles: {
-      0: { cellWidth: 30, fontStyle: 'bold', fillColor: [249, 250, 251] },
-      1: { cellWidth: 100 },
-      2: { cellWidth: 37, halign: 'right', fontStyle: 'bold' },
-    },
-  })
+        <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:20px;">
+          <thead>
+            <tr style="background:#1e40af;color:white;">
+              <th style="padding:10px 14px;text-align:left;font-weight:bold;">项目</th>
+              <th style="padding:10px 14px;text-align:left;font-weight:bold;">说明</th>
+              <th style="padding:10px 14px;text-align:right;font-weight:bold;width:100px;">总价</th>
+              <th style="padding:10px 14px;text-align:right;font-weight:bold;width:90px;">人均</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="background:#f8fafc;">
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;font-weight:bold;color:#1e40af;">🏨 酒店住宿</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;">${hotelLevelLabels[config.selectedHotelLevel]} × ${requirement.days - 1}晚</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;font-weight:bold;">¥${quote.hotelCost.toLocaleString()}</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.hotelCost / requirement.peopleCount).toLocaleString()}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;font-weight:bold;color:#1e40af;">🎫 门票组合</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;">${selectedTickets || '客户自理'}</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;font-weight:bold;">¥${quote.ticketCost.toLocaleString()}</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.ticketCost / requirement.peopleCount).toLocaleString()}</td>
+            </tr>
+            <tr style="background:#f8fafc;">
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;font-weight:bold;color:#1e40af;">🛠️ 增值服务</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;">
+                ${[
+                  config.includeLeader ? '专业领队' : '',
+                  config.includeRescue ? '救援服务' : '',
+                  config.includeInsurance ? '保险' : '',
+                  config.includeMeals ? '餐饮包' : '',
+                ].filter(Boolean).join('、') || '无'}
+              </td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;font-weight:bold;">¥${quote.serviceCost.toLocaleString()}</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.serviceCost / requirement.peopleCount).toLocaleString()}</td>
+            </tr>
+            <tr>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;font-weight:bold;color:#1e40af;">🚗 交通及其他</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;">${requirement.transportType === 'rental' ? '租车费用+保险' : '车辆服务'}</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;font-weight:bold;">¥${quote.otherCost.toLocaleString()}</td>
+              <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.otherCost / requirement.peopleCount).toLocaleString()}</td>
+            </tr>
+            <tr style="background:#f0fdf4;border-top:2px solid #22c55e;">
+              <td style="padding:10px 14px;border:1px solid #bbf7d0;font-weight:bold;color:#16a34a;">💵 计划利润</td>
+              <td style="padding:10px 14px;border:1px solid #bbf7d0;">毛利率 ${config.profitMargin}%</td>
+              <td style="padding:10px 14px;border:1px solid #bbf7d0;text-align:right;font-weight:bold;color:#16a34a;">¥${quote.profit.toLocaleString()}</td>
+              <td style="padding:10px 14px;border:1px solid #bbf7d0;text-align:right;color:#22c55e;">¥${Math.round(quote.profit / requirement.peopleCount).toLocaleString()}</td>
+            </tr>
+          </tbody>
+        </table>
 
-  const after1 = (doc as any).lastAutoTable.finalY + 8
-  doc.setFillColor(239, 246, 255)
-  doc.rect(margin, after1, 167, 22, 'F')
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(30, 64, 175)
-  doc.text('报价区间', margin + 5, after1 + 9)
-  doc.setFontSize(16)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(21, 128, 61)
-  doc.text(`¥${quote.totalMin.toLocaleString()} - ¥${quote.totalMax.toLocaleString()}`, margin + 35, after1 + 12)
-  doc.setFontSize(10)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(107, 114, 128)
-  doc.text(`毛利率约 ${quote.profitMargin}%`, 140, after1 + 12)
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;">
+            <div style="font-size:12px;font-weight:bold;color:#15803d;margin-bottom:8px;">✓ 费用包含项目</div>
+            <div style="font-size:10px;color:#166534;line-height:2;">
+              ${route.included.map((x: string) => `<div>• ${x}</div>`).join('')}
+            </div>
+          </div>
+          <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:14px 18px;">
+            <div style="font-size:12px;font-weight:bold;color:#b91c1c;margin-bottom:8px;">✗ 费用不含项目</div>
+            <div style="font-size:10px;color:#dc2626;line-height:2;">
+              ${route.notIncluded.map((x: string) => `<div>• ${x}</div>`).join('')}
+            </div>
+          </div>
+        </div>
 
-  const after2 = after1 + 32
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(30, 64, 175)
-  doc.text('3.2 费用包含项目', margin, after2)
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(75, 85, 99)
-  route.included.forEach((item, i) => {
-    doc.setFillColor(34, 197, 94)
-    doc.circle(margin + 3, after2 + 8 + i * 5.5, 1.5, 'F')
-    doc.text(item, margin + 8, after2 + 9 + i * 5.5)
-  })
+        ${quote.warnings.length > 0 ? `
+          <div style="margin-top:16px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;">
+            <div style="font-size:11px;font-weight:bold;color:#92400e;margin-bottom:6px;">⚠️ 温馨提示</div>
+            ${quote.warnings.map(w => `<div style="font-size:10px;color:#a16207;margin-bottom:3px;">${w}</div>`).join('')}
+          </div>
+        ` : ''}
+      </div>
 
-  const after3 = after2 + 8 + route.included.length * 5.5 + 10
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(30, 64, 175)
-  doc.text('3.3 费用不包含项目', margin, after3)
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(75, 85, 99)
-  route.notIncluded.forEach((item, i) => {
-    doc.setFillColor(239, 68, 68)
-    doc.circle(margin + 3, after3 + 8 + i * 5.5, 1.5, 'F')
-    doc.text(item, margin + 8, after3 + 9 + i * 5.5)
-  })
-
-  if (quote.warnings.length > 0) {
-    const after4 = after3 + 8 + route.notIncluded.length * 5.5 + 10
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(220, 38, 38)
-    doc.text('3.4 温馨提示', margin, after4)
-    doc.setFontSize(9)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(127, 29, 29)
-    quote.warnings.forEach((w, i) => {
-      doc.text(w, margin, after4 + 8 + i * 5.5)
-    })
-  }
+      ${pageFooter(brand, pageNum, totalPages)}
+    </div>
+  `
 }
 
-function drawNotes(doc: jsPDF, margin: number, pageHeight: number) {
-  doc.setFontSize(16)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(17, 24, 39)
-  doc.text('四、出行注意事项', margin, 32)
-
-  const notes = [
+function buildNotesPage(brand: BrandConfig, pageNum: number, totalPages: number) {
+  const sections = [
     {
+      icon: '🎒',
       title: '4.1 出行准备',
       items: [
         '携带本人有效身份证件、学生证、军官证等优惠证件',
@@ -348,9 +458,11 @@ function drawNotes(doc: jsPDF, margin: number, pageHeight: number) {
         '昼夜温差大，建议携带冲锋衣、羽绒服等保暖衣物',
         '建议自备洗漱用品、保温杯、常用药品（感冒、肠胃药）',
         '出发前请保持良好睡眠，避免饮酒，预防高原反应',
-      ],
+        '请随身携带充电宝、数据线，保持通讯畅通',
+      ]
     },
     {
+      icon: '🛡️',
       title: '4.2 安全须知',
       items: [
         '自驾行程请严格遵守交通规则，严禁疲劳驾驶',
@@ -358,9 +470,11 @@ function drawNotes(doc: jsPDF, margin: number, pageHeight: number) {
         '请勿单独前往偏僻区域，保持与团队通讯畅通',
         '景区游览请走正规步道，切勿踏入未开发区域',
         '如发生身体不适或突发状况，请第一时间联系领队',
-      ],
+        '高原地区行动宜缓不宜快，给身体适应时间',
+      ]
     },
     {
+      icon: '🙏',
       title: '4.3 风俗习惯',
       items: [
         '尊重当地少数民族风俗习惯，不随意拍摄当地居民',
@@ -368,9 +482,11 @@ function drawNotes(doc: jsPDF, margin: number, pageHeight: number) {
         '藏区忌用单手接递物品，接受哈达请双手承接',
         '不随意踩跨经幡、玛尼堆等宗教设施',
         '如需要购买特产纪念品，请确认价格和品质',
-      ],
+        '与当地人交流请礼貌友善，尊重文化差异',
+      ]
     },
     {
+      icon: '📋',
       title: '4.4 退改政策',
       items: [
         '出发前15天取消，退还全款的100%',
@@ -378,141 +494,122 @@ function drawNotes(doc: jsPDF, margin: number, pageHeight: number) {
         '出发前3-6天取消，退还全款的50%',
         '出发前2天内取消，不予退款',
         '行程中因个人原因取消，未产生费用可协商退还',
-      ],
+        '因不可抗力因素导致行程变更，双方协商解决',
+      ]
     },
   ]
 
-  let currentY = 44
-  notes.forEach(section => {
-    if (currentY > pageHeight - 60) {
-      doc.addPage()
-      drawHeader(doc, {
-        agencyName: '星空旅行社',
-        agencyLogo: '',
-        slogan: '',
-        consultantName: '',
-        consultantTitle: '',
-        consultantPhone: '',
-        consultantWechat: '',
-        agencyAddress: '',
-        agencyWebsite: '',
-      }, doc.internal.pageSize.getWidth(), margin)
-      currentY = 32
-    }
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(30, 64, 175)
-    doc.text(section.title, margin, currentY)
-    currentY += 6
+  return `
+    <div style="padding:0;position:relative;height:100%;box-sizing:border-box;">
+      ${pageHeader(brand, '四、出行注意事项')}
 
-    doc.setFontSize(9)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(75, 85, 99)
-    section.items.forEach(item => {
-      doc.setFillColor(251, 191, 36)
-      doc.circle(margin + 3, currentY + 2, 1.5, 'F')
-      doc.text(item, margin + 8, currentY + 3, { maxWidth: 167 })
-      currentY += 6
-    })
-    currentY += 4
-  })
+      <div style="padding:20px 30px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+          ${sections.map(sec => `
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;">
+              <div style="font-size:12px;font-weight:bold;color:#0f172a;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+                <span>${sec.icon}</span>
+                ${sec.title}
+              </div>
+              <div style="font-size:10px;color:#475569;line-height:2;">
+                ${sec.items.map(item => `<div style="display:flex;gap:6px;align-items:flex-start;"><span style="color:#f59e0b;font-weight:bold;">•</span><span>${item}</span></div>`).join('')}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+
+        <div style="margin-top:20px;background:linear-gradient(135deg, #eff6ff, #e0e7ff);border-radius:10px;padding:16px 20px;">
+          <div style="font-size:12px;font-weight:bold;color:#1e40af;margin-bottom:6px;">💡 旅行小贴士</div>
+          <div style="font-size:10px;color:#3730a3;line-height:1.8;">
+            建议出发前一周开始服用红景天等抗高反药物；抵达高原后第一天请勿洗澡；多喝温水，少饮酒；
+            如出现严重头痛、呕吐等症状，请立即下降海拔并就医。旅行最重要的是安全和心情，祝您旅途愉快！
+          </div>
+        </div>
+      </div>
+
+      ${pageFooter(brand, pageNum, totalPages)}
+    </div>
+  `
 }
 
-function drawMapSection(
-  doc: jsPDF,
-  route: RoutePlan,
-  pageWidth: number,
-  margin: number,
-  pageHeight: number
-) {
-  doc.setFontSize(16)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(17, 24, 39)
-  doc.text('五、行程地图', margin, 32)
-
-  const mapX = margin
-  const mapY = 42
-  const mapW = pageWidth - margin * 2
-  const mapH = 110
-
-  doc.setDrawColor(59, 130, 246)
-  doc.setLineWidth(0.3)
-  doc.roundedRect(mapX, mapY, mapW, mapH, 3, 3, 'S')
-  doc.setFillColor(248, 250, 252)
-  doc.roundedRect(mapX + 1, mapY + 1, mapW - 2, mapH - 2, 3, 3, 'F')
-
-  doc.setDrawColor(245, 158, 11)
-  doc.setLineWidth(1)
-  const cities = route.dailyPlans.map(d => d.stayCity)
-  const uniqueCities = [...new Set(cities)]
-
-  const startX = mapX + 20
-  const endX = mapX + mapW - 20
-  const stepY = (mapH - 40) / Math.max(uniqueCities.length - 1, 1)
-  let lastX = startX
-  let lastY = mapY + 20
-
-  uniqueCities.forEach((city, i) => {
-    const x = startX + ((endX - startX) / Math.max(uniqueCities.length - 1, 1)) * i + (Math.sin(i * 2) * 10)
-    const y = mapY + 20 + stepY * i
-    if (i > 0) {
-      doc.line(lastX, lastY, x, y)
+function buildMapPage(brand: BrandConfig, route: RoutePlan, pageNum: number, totalPages: number) {
+  const cities = [...new Set(route.dailyPlans.map(d => d.stayCity))]
+  const points = cities.map((name, i) => {
+    const t = cities.length <= 1 ? 0 : i / (cities.length - 1)
+    return {
+      x: 60 + t * 640,
+      y: 120 + Math.sin(i * 1.3) * 60 + i * 18,
+      name,
+      day: i + 1,
     }
-    lastX = x
-    lastY = y
-
-    doc.setFillColor(239, 68, 68)
-    doc.circle(x, y, 4, 'F')
-    doc.setFontSize(8)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(17, 24, 39)
-    doc.text(city, x + 7, y + 2)
-    doc.setFontSize(7)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(107, 114, 128)
-    doc.text(`D${i + 1}`, x + 7, y + 9)
   })
 
-  const legendY = mapY + mapH + 10
-  doc.setFontSize(10)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(75, 85, 99)
-  doc.text('图例：', mapX, legendY + 4)
-  doc.setFillColor(239, 68, 68)
-  doc.circle(mapX + 18, legendY + 2, 3, 'F')
-  doc.text('住宿城市', mapX + 24, legendY + 4)
-  doc.setDrawColor(245, 158, 11)
-  doc.setLineWidth(1)
-  doc.line(mapX + 55, legendY + 2, mapX + 68, legendY + 2)
-  doc.text('行车路线', mapX + 72, legendY + 4)
-  doc.text(`总里程：${route.totalDriveDistance}km`, mapX + mapW - 30, legendY + 4, { align: 'right' })
+  const pathD = points.map((p, i) => (i ? 'L' : 'M') + p.x + ',' + p.y).join(' ')
 
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(30, 64, 175)
-  doc.text('行程建议', margin, legendY + 20)
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(75, 85, 99)
-  const tips = [
-    '每日出发前规划好行车路线，关注实时路况和天气预报',
-    '高原地区加油站间距较大，建议油量低于半箱时及时补加',
-    '沿途停车拍照请选择安全区域，勿在弯道和坡道停留',
-    '导航请同时准备离线地图，部分山区可能信号不佳',
-  ]
-  tips.forEach((t, i) => {
-    doc.setFillColor(59, 130, 246)
-    doc.circle(margin + 3, legendY + 30 + i * 6, 1.5, 'F')
-    doc.text(t, margin + 8, legendY + 31 + i * 6)
-  })
+  return `
+    <div style="padding:0;position:relative;height:100%;box-sizing:border-box;">
+      ${pageHeader(brand, '五、行程地图示意')}
 
-  const signY = pageHeight - margin - 20
-  doc.setDrawColor(209, 213, 219)
-  doc.line(margin, signY, pageWidth - margin, signY)
-  doc.setFontSize(10)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(107, 114, 128)
-  doc.text('顾问签字：________________', margin, signY + 10)
-  doc.text('客户确认签字：________________', pageWidth * 0.45, signY + 10)
-  doc.text('日期：____________', pageWidth - margin, signY + 10, { align: 'right' })
+      <div style="padding:24px 30px;">
+        <div style="position:relative;background:linear-gradient(180deg, #f0f9ff, #e0f2fe);border:1px solid #bfdbfe;border-radius:12px;padding:20px;height:380px;overflow:hidden;">
+          <div style="position:absolute;inset:0;opacity:0.3;">
+            <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+                  <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#93c5fd" stroke-width="0.5"/>
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#grid)" />
+            </svg>
+          </div>
+
+          <svg style="position:relative;z-index:5;width:100%;height:100%;" viewBox="0 0 760 340" preserveAspectRatio="xMidYMid meet">
+            <path d="${pathD}" fill="none" stroke="${route.accentColor}" stroke-width="3" stroke-dasharray="6 4" stroke-linecap="round"/>
+
+            ${points.map(p => `
+              <g>
+                <circle cx="${p.x}" cy="${p.y}" r="7" fill="white" stroke="${route.accentColor}" stroke-width="2.5"/>
+                <circle cx="${p.x}" cy="${p.y}" r="3.5" fill="#ef4444"/>
+                <text x="${p.x + 14}" y="${p.y + 4}" fill="#0f172a" font-size="12" font-weight="bold">${p.name}</text>
+                <text x="${p.x + 14}" y="${p.y + 18}" fill="#64748b" font-size="10">D${p.day}</text>
+              </g>
+            `).join('')}
+          </svg>
+
+          <div style="position:absolute;bottom:12px;left:16px;right:16px;display:flex;justify-content:space-between;align-items:center;font-size:10px;color:#475569;background:rgba(255,255,255,0.9);padding:6px 12px;border-radius:6px;backdrop-filter:blur(4px);">
+            <div style="display:flex;gap:16px;">
+              <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#ef4444;"></span>住宿城市</span>
+              <span style="display:flex;align-items:center;gap:4px;"><span style="width:20px;height:2px;background:${route.accentColor};"></span>行车路线</span>
+            </div>
+            <span style="font-weight:bold;color:#1e40af;">总里程 ${route.totalDriveDistance}km</span>
+          </div>
+        </div>
+
+        <div style="margin-top:20px;">
+          <div style="font-size:13px;font-weight:bold;color:#0f172a;margin-bottom:10px;">行车建议</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:10px;color:#475569;line-height:2;">
+            <div style="display:flex;gap:6px;align-items:flex-start;"><span style="color:#3b82f6;font-weight:bold;">•</span>每日出发前规划好行车路线，关注实时路况</div>
+            <div style="display:flex;gap:6px;align-items:flex-start;"><span style="color:#3b82f6;font-weight:bold;">•</span>高原地区加油站间距大，半箱油及时补加</div>
+            <div style="display:flex;gap:6px;align-items:flex-start;"><span style="color:#3b82f6;font-weight:bold;">•</span>停车拍照选安全区域，勿在弯道坡道停留</div>
+            <div style="display:flex;gap:6px;align-items:flex-start;"><span style="color:#3b82f6;font-weight:bold;">•</span>山区信号不佳，请提前下载离线地图</div>
+          </div>
+        </div>
+
+        <div style="margin-top:30px;padding-top:20px;border-top:2px dashed #cbd5e1;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;">
+            <div style="font-size:10px;color:#475569;">
+              <div style="margin-bottom:4px;">旅行社确认：__________________</div>
+              <div>日期：__________________</div>
+            </div>
+            <div style="font-size:10px;color:#475569;">
+              <div style="margin-bottom:4px;">客户确认签字：__________________</div>
+              <div>日期：__________________</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      ${pageFooter(brand, pageNum, totalPages)}
+    </div>
+  `
 }
