@@ -7,7 +7,7 @@ export function calculateQuote(
   config: QuoteConfig
 ): QuoteResult {
   const { peopleCount, days } = requirement
-  const { selectedHotelLevel, selectedTickets, includeLeader, includeRescue, includeInsurance, includeMeals, profitMargin } = config
+  const { selectedHotelLevel, selectedTickets, includeLeader, includeRescue, includeInsurance, includeMeals, profitMargin, discountAmount = 0 } = config
 
   const warnings: string[] = []
 
@@ -59,10 +59,13 @@ export function calculateQuote(
 
   const subtotal = hotelCost + ticketCost + serviceCost + routeBase * 0.5 + transportCost
   const profit = subtotal * (profitMargin / 100)
-  const totalMin = Math.round((subtotal + profit) / 100) * 100
+  const totalBeforeDiscount = Math.round((subtotal + profit) / 100) * 100
+  const safeDiscount = Math.max(0, Math.min(discountAmount, totalBeforeDiscount - 1000))
+  const totalAfterDiscount = totalBeforeDiscount - safeDiscount
+  const totalMin = Math.round(totalAfterDiscount / 100) * 100
   const totalMax = Math.round((totalMin * 1.15) / 100) * 100
 
-  const actualMargin = (profit / totalMax) * 100
+  const actualMargin = totalMin > 0 ? (profit / totalMin) * 100 : 0
   if (actualMargin < 8) {
     warnings.push('⚠️ 当前毛利率偏低，建议提高利润率或降低成本项')
   }
@@ -71,6 +74,9 @@ export function calculateQuote(
   }
   if (days < 5 && includeLeader) {
     warnings.push('💡 短途行程领队成本占比较高，可考虑减少领队天数')
+  }
+  if (safeDiscount > 0 && actualMargin < 5) {
+    warnings.push('⚠️ 优惠后毛利率低于5%，请注意成本控制')
   }
 
   return {
@@ -81,6 +87,8 @@ export function calculateQuote(
     serviceBreakdown,
     otherCost: Math.round(routeBase * 0.5 + transportCost),
     profit: Math.round(profit),
+    discountAmount: safeDiscount,
+    totalBeforeDiscount,
     totalMin,
     totalMax,
     profitMargin: Math.round(actualMargin * 10) / 10,

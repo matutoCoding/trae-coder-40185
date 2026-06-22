@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import type { AppStep, CustomerRequirement, QuoteConfig, RoutePlan, BrandConfig, QuoteResult, DailyPlan, QuoteVersion } from '@/types'
+import type { AppStep, CustomerRequirement, QuoteConfig, RoutePlan, BrandConfig, QuoteResult, DailyPlan, QuoteVersion, ConfirmRecord } from '@/types'
 import { generateRoutePlans } from '@/data/routes'
 import { calculateQuote } from '@/utils/quote'
 import { StepHeader } from '@/components/StepHeader'
@@ -14,6 +14,8 @@ const STORAGE_KEYS = {
   editedRoutes: 'lushu_edited_routes',
   quoteVersions: 'lushu_quote_versions',
   quoteNote: 'lushu_quote_note',
+  confirmRecord: 'lushu_confirm_record',
+  currentVersionId: 'lushu_current_version',
 }
 
 const defaultRequirement: CustomerRequirement = {
@@ -39,6 +41,14 @@ const defaultQuoteConfig: QuoteConfig = {
   includeInsurance: true,
   includeMeals: false,
   profitMargin: 15,
+  discountAmount: 0,
+}
+
+const defaultConfirmRecord: ConfirmRecord = {
+  status: 'pending',
+  signedBy: '',
+  confirmedAt: null,
+  revisionNote: '',
 }
 
 function loadFromStorage<T>(key: string, defaultValue: T): T {
@@ -82,6 +92,8 @@ export default function App() {
   const [editedRoutes, setEditedRoutes] = useState<Record<string, RoutePlan>>(() => loadFromStorage(STORAGE_KEYS.editedRoutes, {}))
   const [quoteVersions, setQuoteVersions] = useState<QuoteVersion[]>(() => loadFromStorage<QuoteVersion[]>(STORAGE_KEYS.quoteVersions, []))
   const [quoteNote, setQuoteNote] = useState<string>(() => loadFromStorage<string>(STORAGE_KEYS.quoteNote, ''))
+  const [confirmRecord, setConfirmRecord] = useState<ConfirmRecord>(() => loadFromStorage<ConfirmRecord>(STORAGE_KEYS.confirmRecord, defaultConfirmRecord))
+  const [currentVersionId, setCurrentVersionId] = useState<string | null>(() => loadFromStorage<string | null>(STORAGE_KEYS.currentVersionId, null))
 
   useEffect(() => {
     saveToStorage(STORAGE_KEYS.requirement, requirement)
@@ -106,6 +118,14 @@ export default function App() {
   useEffect(() => {
     saveToStorage(STORAGE_KEYS.quoteNote, quoteNote)
   }, [quoteNote])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.confirmRecord, confirmRecord)
+  }, [confirmRecord])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.currentVersionId, currentVersionId)
+  }, [currentVersionId])
 
   const baseRoutes = useMemo(
     () => generateRoutePlans(requirement.days, requirement.destination, requirement.includeHiddenGems),
@@ -159,15 +179,20 @@ export default function App() {
     setSelectedRouteId(id)
   }, [])
 
-  const saveQuoteVersion = useCallback((name: string) => {
+  const saveQuoteVersion = useCallback((data: { name: string; description: string; validUntil: string; minPeople: number; maxPeople: number }) => {
     const newVersion: QuoteVersion = {
       id: 'qv_' + Date.now(),
-      name,
+      name: data.name,
+      description: data.description,
+      validUntil: data.validUntil,
+      minPeople: data.minPeople,
+      maxPeople: data.maxPeople,
       config: { ...quoteConfig },
       note: quoteNote,
       createdAt: Date.now(),
     }
     setQuoteVersions(prev => [...prev, newVersion])
+    setCurrentVersionId(newVersion.id)
   }, [quoteConfig, quoteNote])
 
   const applyQuoteVersion = useCallback((versionId: string) => {
@@ -175,8 +200,25 @@ export default function App() {
     if (version) {
       setQuoteConfig(version.config)
       setQuoteNote(version.note)
+      setCurrentVersionId(versionId)
     }
   }, [quoteVersions])
+
+  const updateDiscount = useCallback((amount: number) => {
+    setQuoteConfig(prev => ({ ...prev, discountAmount: amount }))
+  }, [])
+
+  const updateConfirmRecord = useCallback((record: Partial<ConfirmRecord>) => {
+    setConfirmRecord(prev => {
+      const next = { ...prev, ...record }
+      if (record.status === 'confirmed' && !prev.confirmedAt) {
+        next.confirmedAt = Date.now()
+      } else if (record.status && record.status !== 'confirmed') {
+        next.confirmedAt = null
+      }
+      return next
+    })
+  }, [])
 
   const deleteQuoteVersion = useCallback((versionId: string) => {
     setQuoteVersions(prev => prev.filter(v => v.id !== versionId))
@@ -222,6 +264,12 @@ export default function App() {
             onSaveQuoteVersion={saveQuoteVersion}
             onApplyQuoteVersion={applyQuoteVersion}
             onDeleteQuoteVersion={deleteQuoteVersion}
+            currentVersionId={currentVersionId}
+            setCurrentVersionId={setCurrentVersionId}
+            confirmRecord={confirmRecord}
+            setConfirmRecord={updateConfirmRecord}
+            discountAmount={quoteConfig.discountAmount || 0}
+            setDiscountAmount={updateDiscount}
           />
         )}
         {step === 'export' && (
@@ -234,6 +282,12 @@ export default function App() {
             setBrand={setBrand}
             onBack={() => setStep('comparison')}
             quoteNote={quoteNote}
+            confirmRecord={confirmRecord}
+            setConfirmRecord={updateConfirmRecord}
+            discountAmount={quoteConfig.discountAmount || 0}
+            setDiscountAmount={updateDiscount}
+            currentVersionId={currentVersionId}
+            quoteVersions={quoteVersions}
           />
         )}
       </main>

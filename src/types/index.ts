@@ -78,6 +78,7 @@ export interface QuoteConfig {
   includeInsurance: boolean
   includeMeals: boolean
   profitMargin: number
+  discountAmount: number
 }
 
 export interface ServiceBreakdown {
@@ -95,15 +96,30 @@ export interface QuoteResult {
   serviceBreakdown: ServiceBreakdown
   otherCost: number
   profit: number
+  discountAmount: number
+  totalBeforeDiscount: number
   totalMin: number
   totalMax: number
   profitMargin: number
   warnings: string[]
 }
 
+export type ConfirmStatus = 'pending' | 'confirmed' | 'revised'
+
+export interface ConfirmRecord {
+  status: ConfirmStatus
+  signedBy: string
+  confirmedAt: number | null
+  revisionNote: string
+}
+
 export interface QuoteVersion {
   id: string
   name: string
+  description: string
+  validUntil: string
+  minPeople: number
+  maxPeople: number
   config: QuoteConfig
   note: string
   createdAt: number

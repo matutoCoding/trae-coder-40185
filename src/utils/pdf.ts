@@ -10,7 +10,11 @@ export async function generatePDF(
   config: QuoteConfig,
   quote: QuoteResult,
   filename: string,
-  quoteNote: string = ''
+  quoteNote: string = '',
+  versionInfo?: { name: string; description: string; validUntil: string },
+  confirmStatus?: { status: 'pending' | 'confirmed' | 'revised'; signedBy: string; confirmedAt: number | null },
+  discountAmount: number = 0,
+  totalBeforeDiscount: number = 0
 ): Promise<boolean> {
   const container = document.createElement('div')
   container.style.position = 'fixed'
@@ -22,7 +26,7 @@ export async function generatePDF(
   document.body.appendChild(container)
 
   try {
-    const pages = buildPDFPages(brand, requirement, route, config, quote, quoteNote)
+    const pages = buildPDFPages(brand, requirement, route, config, quote, quoteNote, versionInfo, confirmStatus, discountAmount, totalBeforeDiscount)
     container.innerHTML = pages
 
     const pageElements = container.querySelectorAll('.pdf-page')
@@ -74,7 +78,11 @@ function buildPDFPages(
   route: RoutePlan,
   config: QuoteConfig,
   quote: QuoteResult,
-  quoteNote: string
+  quoteNote: string,
+  versionInfo?: { name: string; description: string; validUntil: string },
+  confirmStatus?: { status: 'pending' | 'confirmed' | 'revised'; signedBy: string; confirmedAt: number | null },
+  discountAmount: number = 0,
+  totalBeforeDiscount: number = 0
 ): string {
   const selectedTickets = config.selectedTickets
     .map(id => ticketPackages.find(t => t.id === id)?.name)
@@ -86,18 +94,18 @@ function buildPDFPages(
 
   const pages: string[] = []
 
-  pages.push(buildCoverPage(brand, requirement, route, 1, totalPages))
-  pages.push(buildOverviewPage(brand, requirement, route, 2, totalPages))
+  pages.push(buildCoverPage(brand, requirement, route, 1, totalPages, versionInfo))
+  pages.push(buildOverviewPage(brand, requirement, route, 2, totalPages, discountAmount, totalBeforeDiscount))
 
   dailyChunks.forEach((chunk, idx) => {
-    pages.push(buildDailyPage(brand, route, chunk, 3 + idx, totalPages))
+    pages.push(buildDailyPage(brand, route, chunk, 3 + idx, totalPages, discountAmount, totalBeforeDiscount))
   })
 
   const quotePageNum = 3 + dailyChunks.length
-  pages.push(buildQuotePage(brand, requirement, route, config, quote, selectedTickets, quoteNote, quotePageNum, totalPages))
-  pages.push(buildNotesPage(brand, quotePageNum + 1, totalPages))
-  pages.push(buildMapPage(brand, route, quotePageNum + 2, totalPages))
-  pages.push(buildConfirmPage(brand, requirement, route, quote, quotePageNum + 3, totalPages))
+  pages.push(buildQuotePage(brand, requirement, route, config, quote, selectedTickets, quoteNote, quotePageNum, totalPages, discountAmount, totalBeforeDiscount))
+  pages.push(buildNotesPage(brand, quotePageNum + 1, totalPages, discountAmount, totalBeforeDiscount))
+  pages.push(buildMapPage(brand, route, quotePageNum + 2, totalPages, discountAmount, totalBeforeDiscount))
+  pages.push(buildConfirmPage(brand, requirement, route, quote, quotePageNum + 3, totalPages, confirmStatus, discountAmount, totalBeforeDiscount))
 
   return pages.map(html => `<div class="pdf-page" style="width:794px;min-height:1123px;background:#fff;position:relative;overflow:hidden;box-sizing:border-box;">${html}</div>`).join('')
 }
@@ -156,7 +164,7 @@ function pageFooter(brand: BrandConfig, pageNum: number, total: number) {
   `
 }
 
-function buildCoverPage(brand: BrandConfig, requirement: CustomerRequirement, route: RoutePlan, pageNum: number, totalPages: number) {
+function buildCoverPage(brand: BrandConfig, requirement: CustomerRequirement, route: RoutePlan, pageNum: number, totalPages: number, versionInfo?: { name: string; description: string; validUntil: string }) {
   return `
     <div style="width:100%;height:100%;background:linear-gradient(135deg, #1e3a8a 0%, #3b82f6 60%, #60a5fa 100%);position:relative;overflow:hidden;">
       <div style="position:absolute;right:-60px;top:-60px;width:240px;height:240px;border-radius:50%;background:rgba(255,255,255,0.1);"></div>
@@ -165,7 +173,17 @@ function buildCoverPage(brand: BrandConfig, requirement: CustomerRequirement, ro
 
       <div style="padding:80px 60px 60px;color:white;position:relative;z-index:10;height:100%;box-sizing:border-box;display:flex;flex-direction:column;">
         <div style="font-size:22px;font-weight:bold;margin-bottom:6px;letter-spacing:1px;">${brand.agencyName || '旅行社'}</div>
-        <div style="font-size:11px;opacity:80%;margin-bottom:60px;">${brand.slogan || ''}</div>
+        <div style="font-size:11px;opacity:80%;margin-bottom:${versionInfo ? '16px' : '60px'};">${brand.slogan || ''}</div>
+        ${versionInfo ? `
+          <div style="display:flex;gap:8px;margin-bottom:44px;">
+            <div style="background:rgba(255,255,255,0.15);padding:4px 10px;border-radius:6px;font-size:10px;backdrop-filter:blur(4px);">
+              版本：${versionInfo.name}
+            </div>
+            <div style="background:rgba(251,191,36,0.25);padding:4px 10px;border-radius:6px;font-size:10px;backdrop-filter:blur(4px);">
+              有效期至：${versionInfo.validUntil}
+            </div>
+          </div>
+        ` : ''}
 
         <div style="font-size:12px;opacity:85%;letter-spacing:4px;margin-bottom:16px;">定 制 自 驾 旅 游 方 案</div>
 
@@ -209,7 +227,7 @@ function buildCoverPage(brand: BrandConfig, requirement: CustomerRequirement, ro
   `
 }
 
-function buildOverviewPage(brand: BrandConfig, requirement: CustomerRequirement, route: RoutePlan, pageNum: number, totalPages: number) {
+function buildOverviewPage(brand: BrandConfig, requirement: CustomerRequirement, route: RoutePlan, pageNum: number, totalPages: number, discountAmount: number = 0, totalBeforeDiscount: number = 0) {
   return `
     <div style="padding:0;position:relative;height:100%;box-sizing:border-box;">
       ${pageHeader(brand, '一、行程概览')}
@@ -280,7 +298,7 @@ function buildOverviewPage(brand: BrandConfig, requirement: CustomerRequirement,
   `
 }
 
-function buildDailyPage(brand: BrandConfig, route: RoutePlan, dailyPlans: any[], pageNum: number, totalPages: number) {
+function buildDailyPage(brand: BrandConfig, route: RoutePlan, dailyPlans: any[], pageNum: number, totalPages: number, discountAmount: number = 0, totalBeforeDiscount: number = 0) {
   return `
     <div style="padding:0;position:relative;height:100%;box-sizing:border-box;">
       ${pageHeader(brand, '二、每日行程安排')}
@@ -349,7 +367,9 @@ function buildQuotePage(
   selectedTickets: string,
   quoteNote: string,
   pageNum: number,
-  totalPages: number
+  totalPages: number,
+  discountAmount: number = 0,
+  totalBeforeDiscount: number = 0
 ) {
   const pc = requirement.peopleCount
   return `
@@ -364,7 +384,14 @@ function buildQuotePage(
             <span style="font-size:16px;opacity:70%;margin:0 8px;">~</span>
             ¥${quote.totalMax.toLocaleString()}
           </div>
-          <div style="display:flex;justify-content:space-between;font-size:10px;margin-top:8px;">
+          ${discountAmount > 0 ? `
+            <div style="display:flex;align-items:center;gap:10px;margin-top:8px;font-size:13px;">
+              <span style="text-decoration:line-through;opacity:70;">原价 ¥${(totalBeforeDiscount || quote.totalMin).toLocaleString()}</span>
+              <span style="color:#fca5a5;font-weight:bold;">-¥${discountAmount.toLocaleString()} 优惠</span>
+              <span style="color:#4ade80;font-weight:bold;font-size:15px;">折后价 ¥${quote.totalMin.toLocaleString()} ~ ¥${quote.totalMax.toLocaleString()}</span>
+            </div>
+          ` : ''}
+          <div style="display:flex;justify-content:space-between;font-size:10px;margin-top:${discountAmount > 0 ? '6px' : '8px'};">
             <span style="opacity:80;">人均 ¥${Math.round(quote.totalMin / requirement.peopleCount).toLocaleString()} 起</span>
             <span style="color:#fcd34d;font-weight:bold;">毛利率约 ${quote.profitMargin}%</span>
           </div>
@@ -439,6 +466,14 @@ function buildQuotePage(
               <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;font-weight:bold;">¥${quote.otherCost.toLocaleString()}</td>
               <td style="padding:10px 14px;border:1px solid #e2e8f0;text-align:right;color:#64748b;">¥${Math.round(quote.otherCost / pc).toLocaleString()}</td>
             </tr>
+            ${discountAmount > 0 ? `
+              <tr style="background:#fef2f2;">
+                <td style="padding:10px 14px;border:1px solid #fecaca;font-weight:bold;color:#dc2626;">🎟️ 优惠折扣</td>
+                <td style="padding:10px 14px;border:1px solid #fecaca;color:#991b1b;">顾问优惠</td>
+                <td style="padding:10px 14px;border:1px solid #fecaca;text-align:right;font-weight:bold;color:#dc2626;">-¥${discountAmount.toLocaleString()}</td>
+                <td style="padding:10px 14px;border:1px solid #fecaca;text-align:right;color:#dc2626;">-¥${Math.round(discountAmount / pc).toLocaleString()}</td>
+              </tr>
+            ` : ''}
             <tr style="background:#f0fdf4;border-top:2px solid #22c55e;">
               <td style="padding:10px 14px;border:1px solid #bbf7d0;font-weight:bold;color:#16a34a;">💵 计划利润</td>
               <td style="padding:10px 14px;border:1px solid #bbf7d0;">毛利率 ${config.profitMargin}%</td>
@@ -446,6 +481,15 @@ function buildQuotePage(
               <td style="padding:10px 14px;border:1px solid #bbf7d0;text-align:right;color:#22c55e;">¥${Math.round(quote.profit / pc).toLocaleString()}</td>
             </tr>
           </tbody>
+          ${discountAmount > 0 ? `
+            <tfoot>
+              <tr style="background:#f0fdf4;border-top:3px solid #22c55e;">
+                <td colspan="2" style="padding:12px 14px;border:1px solid #bbf7d0;font-weight:bold;color:#15803d;font-size:13px;">💰 折扣后总计</td>
+                <td style="padding:12px 14px;border:1px solid #bbf7d0;text-align:right;font-weight:bold;color:#16a34a;font-size:16px;">¥${quote.totalMin.toLocaleString()}</td>
+                <td style="padding:12px 14px;border:1px solid #bbf7d0;text-align:right;font-weight:bold;color:#16a34a;">¥${Math.round(quote.totalMin / pc).toLocaleString()}</td>
+              </tr>
+            </tfoot>
+          ` : ''}
         </table>
 
         ${quoteNote ? `
@@ -483,7 +527,7 @@ function buildQuotePage(
   `
 }
 
-function buildNotesPage(brand: BrandConfig, pageNum: number, totalPages: number) {
+function buildNotesPage(brand: BrandConfig, pageNum: number, totalPages: number, discountAmount: number = 0, totalBeforeDiscount: number = 0) {
   const sections = [
     {
       icon: '🎒',
@@ -568,7 +612,7 @@ function buildNotesPage(brand: BrandConfig, pageNum: number, totalPages: number)
   `
 }
 
-function buildMapPage(brand: BrandConfig, route: RoutePlan, pageNum: number, totalPages: number) {
+function buildMapPage(brand: BrandConfig, route: RoutePlan, pageNum: number, totalPages: number, discountAmount: number = 0, totalBeforeDiscount: number = 0) {
   const cities = [...new Set(route.dailyPlans.map(d => d.stayCity))]
   const points = cities.map((name, i) => {
     const t = cities.length <= 1 ? 0 : i / (cities.length - 1)
@@ -643,7 +687,10 @@ function buildConfirmPage(
   route: RoutePlan,
   quote: QuoteResult,
   pageNum: number,
-  totalPages: number
+  totalPages: number,
+  confirmStatus?: { status: 'pending' | 'confirmed' | 'revised'; signedBy: string; confirmedAt: number | null },
+  discountAmount: number = 0,
+  totalBeforeDiscount: number = 0
 ) {
   return `
     <div style="padding:0;position:relative;height:100%;box-sizing:border-box;">
@@ -653,6 +700,25 @@ function buildConfirmPage(
         <div style="text-align:center;margin-bottom:24px;">
           <div style="font-size:20px;font-weight:bold;color:#1e3a8a;letter-spacing:2px;">行程确认单</div>
           <div style="width:60px;height:3px;background:linear-gradient(90deg,#3b82f6,#fbbf24);border-radius:2px;margin:10px auto 0;"></div>
+          ${confirmStatus ? `
+            <div style="margin-top:12px;">
+              ${confirmStatus.status === 'pending' ? `
+                <span style="display:inline-block;padding:4px 14px;border-radius:20px;background:#f1f5f9;color:#64748b;font-size:11px;font-weight:600;">
+                  ⏳ 待确认
+                </span>
+              ` : confirmStatus.status === 'confirmed' ? `
+                <span style="display:inline-block;padding:4px 14px;border-radius:20px;background:#dcfce7;color:#16a34a;font-size:11px;font-weight:600;">
+                  ✓ 已确认
+                  ${confirmStatus.confirmedAt ? ` · ${new Date(confirmStatus.confirmedAt).toLocaleDateString('zh-CN')}` : ''}
+                  ${confirmStatus.signedBy ? ` · ${confirmStatus.signedBy}` : ''}
+                </span>
+              ` : `
+                <span style="display:inline-block;padding:4px 14px;border-radius:20px;background:#ffedd5;color:#ea580c;font-size:11px;font-weight:600;">
+                  ✏️ 需修改
+                </span>
+              `}
+            </div>
+          ` : ''}
         </div>
 
         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
@@ -685,6 +751,13 @@ function buildConfirmPage(
 
         <div style="background:linear-gradient(135deg, #1e3a8a, #3b82f6);border-radius:12px;padding:20px 24px;color:white;margin-bottom:20px;">
           <div style="font-size:11px;opacity:80%;margin-bottom:6px;">合同总报价（${requirement.peopleCount}人）</div>
+          ${discountAmount > 0 ? `
+            <div style="display:flex;align-items:center;gap:10px;font-size:12px;margin-bottom:6px;flex-wrap:wrap;">
+              <span style="text-decoration:line-through;opacity:70;">原价 ¥${(totalBeforeDiscount || quote.totalMin).toLocaleString()}</span>
+              <span style="color:#fca5a5;font-weight:bold;">→ 优惠 -¥${discountAmount.toLocaleString()}</span>
+              <span style="color:#4ade80;font-weight:bold;">→ 合同价</span>
+            </div>
+          ` : ''}
           <div style="font-size:26px;font-weight:bold;letter-spacing:1px;">
             ¥${quote.totalMin.toLocaleString()}
             <span style="font-size:14px;opacity:70%;margin:0 8px;">~</span>
@@ -739,9 +812,20 @@ function buildConfirmPage(
               <div style="background:#fafafa;border:1px dashed #86efac;border-radius:8px;padding:14px;">
                 <div style="font-size:10px;color:#64748b;margin-bottom:4px;">参团人员：${requirement.peopleCount} 人</div>
                 <div style="font-size:10px;color:#64748b;margin-bottom:12px;">联系人：${requirement.customerName || '____________'}</div>
-                <div style="height:40px;"></div>
-                <div style="font-size:10px;color:#94a3b8;border-top:1px solid #cbd5e1;padding-top:4px;">客户签字</div>
-                <div style="font-size:10px;color:#94a3b8;margin-top:4px;">日期：______________</div>
+                ${confirmStatus && confirmStatus.status === 'confirmed' && confirmStatus.signedBy ? `
+                  <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:8px 10px;margin-bottom:8px;">
+                    <div style="font-size:11px;font-weight:bold;color:#16a34a;">✓ ${confirmStatus.signedBy} 已确认</div>
+                    ${confirmStatus.confirmedAt ? `
+                      <div style="font-size:10px;color:#6b7280;margin-top:2px;">已于 ${new Date(confirmStatus.confirmedAt).toLocaleDateString('zh-CN')} 确认</div>
+                    ` : ''}
+                  </div>
+                ` : `
+                  <div style="height:40px;"></div>
+                `}
+                ${confirmStatus && confirmStatus.status === 'confirmed' && confirmStatus.signedBy ? '' : `
+                  <div style="font-size:10px;color:#94a3b8;border-top:1px solid #cbd5e1;padding-top:4px;">客户签字</div>
+                  <div style="font-size:10px;color:#94a3b8;margin-top:4px;">日期：______________</div>
+                `}
               </div>
             </div>
           </div>

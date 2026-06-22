@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan, DailyPlan, QuoteVersion } from '@/types'
+import type { CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan, DailyPlan, QuoteVersion, ConfirmRecord, ConfirmStatus } from '@/types'
 import { hotelOptions, hotelLevelLabels, ticketPackages, extraServices } from '@/data/options'
 import { formatMoney } from '@/utils/quote'
 
@@ -19,7 +19,13 @@ interface Props {
   quoteVersions: QuoteVersion[]
   quoteNote: string
   setQuoteNote: (n: string) => void
-  onSaveQuoteVersion: (name: string) => void
+  currentVersionId: string | null
+  setCurrentVersionId: (id: string | null) => void
+  confirmRecord: ConfirmRecord
+  setConfirmRecord?: (r: ConfirmRecord) => void
+  discountAmount: number
+  setDiscountAmount: (n: number) => void
+  onSaveQuoteVersion: (data: { name: string; description: string; validUntil: string; minPeople: number; maxPeople: number }) => void
   onApplyQuoteVersion: (id: string) => void
   onDeleteQuoteVersion: (id: string) => void
 }
@@ -30,6 +36,9 @@ export function ComparisonPanel(props: Props) {
     quoteConfig, setQuoteConfig, quote, onNext, onBack,
     onUpdateDailyPlan, onResetRoute, isRouteEdited,
     quoteVersions, quoteNote, setQuoteNote,
+    currentVersionId, setCurrentVersionId,
+    confirmRecord, setConfirmRecord,
+    discountAmount, setDiscountAmount,
     onSaveQuoteVersion, onApplyQuoteVersion, onDeleteQuoteVersion,
   } = props
 
@@ -40,6 +49,11 @@ export function ComparisonPanel(props: Props) {
   const [editForm, setEditForm] = useState<Partial<DailyPlan>>({})
   const [showSaveVersion, setShowSaveVersion] = useState(false)
   const [newVersionName, setNewVersionName] = useState('')
+  const [newVersionDescription, setNewVersionDescription] = useState('')
+  const [newVersionValidUntil, setNewVersionValidUntil] = useState('')
+  const [newVersionMinPeople, setNewVersionMinPeople] = useState(requirement.peopleCount)
+  const [newVersionMaxPeople, setNewVersionMaxPeople] = useState(requirement.peopleCount)
+  const [showNoteFull, setShowNoteFull] = useState(false)
 
   const toggleTicket = (id: string) => {
     const exists = quoteConfig.selectedTickets.includes(id)
@@ -104,9 +118,35 @@ export function ComparisonPanel(props: Props) {
 
   const handleSaveVersion = () => {
     if (newVersionName.trim()) {
-      onSaveQuoteVersion(newVersionName.trim())
+      onSaveQuoteVersion({
+        name: newVersionName.trim(),
+        description: newVersionDescription.trim(),
+        validUntil: newVersionValidUntil,
+        minPeople: newVersionMinPeople,
+        maxPeople: newVersionMaxPeople,
+      })
       setNewVersionName('')
+      setNewVersionDescription('')
+      setNewVersionValidUntil('')
+      setNewVersionMinPeople(requirement.peopleCount)
+      setNewVersionMaxPeople(requirement.peopleCount)
       setShowSaveVersion(false)
+    }
+  }
+
+  const updateConfirmStatus = (status: ConfirmStatus) => {
+    if (setConfirmRecord) {
+      setConfirmRecord({
+        ...confirmRecord,
+        status,
+        confirmedAt: status === 'confirmed' ? Date.now() : status === 'pending' ? null : confirmRecord.confirmedAt,
+      })
+    }
+  }
+
+  const updateConfirmField = <K extends keyof ConfirmRecord>(key: K, value: ConfirmRecord[K]) => {
+    if (setConfirmRecord) {
+      setConfirmRecord({ ...confirmRecord, [key]: value })
     }
   }
 
@@ -135,6 +175,77 @@ export function ComparisonPanel(props: Props) {
                   <span>🎯</span> {requirement.destination || '川西'}
                 </div>
               </div>
+            </div>
+
+            <div className="card p-5 mb-2">
+              <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <span>🤝</span> 成交进度
+              </h3>
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">状态：</span>
+                  <div className="flex gap-1.5">
+                    {([
+                      { key: 'pending' as ConfirmStatus, label: '待确认', color: 'slate', active: 'bg-slate-600 text-white border-slate-600' },
+                      { key: 'confirmed' as ConfirmStatus, label: '已确认', color: 'green', active: 'bg-green-600 text-white border-green-600' },
+                      { key: 'revised' as ConfirmStatus, label: '需修改', color: 'warm', active: 'bg-warm-500 text-white border-warm-500' },
+                    ]).map(st => (
+                      <button
+                        key={st.key}
+                        onClick={() => updateConfirmStatus(st.key)}
+                        className={`text-xs px-3 py-1.5 rounded-md border transition ${
+                          confirmRecord.status === st.key
+                            ? st.active
+                            : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >{st.label}</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="h-6 w-px bg-slate-200" />
+
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-500">当前：</span>
+                  <span className={`font-semibold ${
+                    confirmRecord.status === 'confirmed' ? 'text-green-600' :
+                    confirmRecord.status === 'revised' ? 'text-warm-600' : 'text-slate-600'
+                  }`}>
+                    {confirmRecord.status === 'pending' ? '待客户确认' :
+                     confirmRecord.status === 'confirmed' ? '已确认成交' : '待修改后重发'}
+                  </span>
+                  {confirmRecord.status === 'confirmed' && confirmRecord.confirmedAt && (
+                    <span className="text-slate-400">
+                      · {new Date(confirmRecord.confirmedAt).toLocaleString('zh-CN')}
+                    </span>
+                  )}
+                </div>
+
+                <div className="h-6 w-px bg-slate-200" />
+
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <label className="text-xs text-slate-500 flex-shrink-0">签字客户：</label>
+                  <input
+                    type="text"
+                    value={confirmRecord.signedBy}
+                    onChange={e => updateConfirmField('signedBy', e.target.value)}
+                    placeholder="客户姓名"
+                    className="input-base text-xs py-1.5 flex-1 max-w-[180px]"
+                  />
+                </div>
+              </div>
+
+              {confirmRecord.status === 'revised' && (
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <label className="text-xs text-slate-500 block mb-1.5">修改备注：</label>
+                  <textarea
+                    value={confirmRecord.revisionNote}
+                    onChange={e => updateConfirmField('revisionNote', e.target.value)}
+                    placeholder="记录客户要求修改的内容..."
+                    className="input-base text-xs min-h-[60px] resize-y"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-3 gap-5">
@@ -432,7 +543,28 @@ export function ComparisonPanel(props: Props) {
                       <span className="text-[11px] text-green-500 w-16 text-right">{formatMoney(profitPerPerson)}</span>
                     </span>
                   </div>
+                  {discountAmount > 0 && (
+                    <div className="flex justify-between items-center text-slate-600 py-1">
+                      <span>🎁 优惠折扣</span>
+                      <span className="flex gap-6">
+                        <span className="font-medium text-red-600">-{formatMoney(discountAmount)}</span>
+                        <span className="text-[11px] text-red-500 w-16 text-right">-{formatMoney(Math.round(discountAmount / peopleCount))}</span>
+                      </span>
+                    </div>
+                  )}
                 </div>
+
+                {discountAmount > 0 && (
+                  <div className="mb-3 p-3 rounded-xl bg-green-50 border border-green-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-green-700 font-medium">折扣后总价</span>
+                      <span className="text-lg font-bold text-green-600">
+                        {formatMoney(Math.max(0, quote.totalMin - discountAmount))}
+                        <span className="text-xs text-green-500 font-normal ml-1">起</span>
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 <div className="p-4 rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 text-white">
                   <div className="text-xs text-brand-100 mb-1">建议报价区间</div>
@@ -443,6 +575,24 @@ export function ComparisonPanel(props: Props) {
                     <span className="text-brand-100">人均 {formatMoney(totalPerPerson)} 起</span>
                     <span className="text-warm-300 font-semibold">毛利率 ~{quote.profitMargin}%</span>
                   </div>
+                  {quoteNote && (
+                    <div className="mt-3 pt-3 border-t border-white/20">
+                      <div className="text-[11px] text-brand-100 mb-1 flex items-center justify-between">
+                        <span>📝 备注摘要</span>
+                        {quoteNote.length > 60 && (
+                          <button
+                            onClick={() => setShowNoteFull(!showNoteFull)}
+                            className="text-brand-200 hover:text-white transition"
+                          >{showNoteFull ? '收起' : '展开'}</button>
+                        )}
+                      </div>
+                      <div className={`text-[11px] text-brand-50 leading-relaxed ${!showNoteFull && quoteNote.length > 60 ? 'line-clamp-2' : ''}`}>
+                        {showNoteFull || quoteNote.length <= 60
+                          ? quoteNote
+                          : quoteNote.slice(0, 60) + '...'}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {isOverBudget && (
@@ -585,6 +735,47 @@ export function ComparisonPanel(props: Props) {
                 </div>
               </div>
 
+              <div className="card p-5">
+                <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+                  <span>🏷️</span> 价格折扣
+                </h3>
+                <div>
+                  <div className="text-xs font-semibold text-slate-700 mb-2">优惠金额（元）</div>
+                  <input
+                    type="number"
+                    min={0}
+                    value={discountAmount}
+                    onChange={e => setDiscountAmount(Math.max(0, Number(e.target.value) || 0))}
+                    className="input-base text-sm"
+                    placeholder="输入优惠金额"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <button
+                    onClick={() => setDiscountAmount(Math.max(0, discountAmount - 500))}
+                    className="text-[11px] px-2.5 py-1.5 rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
+                  >-500</button>
+                  <button
+                    onClick={() => setDiscountAmount(Math.max(0, discountAmount - 1000))}
+                    className="text-[11px] px-2.5 py-1.5 rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
+                  >-1000</button>
+                  <button
+                    onClick={() => setDiscountAmount(Math.max(0, discountAmount - 2000))}
+                    className="text-[11px] px-2.5 py-1.5 rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200 transition"
+                  >-2000</button>
+                  <button
+                    onClick={() => setDiscountAmount(0)}
+                    className="text-[11px] px-2.5 py-1.5 rounded-md bg-red-50 text-red-600 hover:bg-red-100 transition"
+                  >重置</button>
+                </div>
+                {discountAmount > 0 && (
+                  <div className="mt-3 p-2.5 rounded-lg bg-green-50 border border-green-100 text-[11px]">
+                    <span className="text-green-700">已优惠：</span>
+                    <span className="font-bold text-green-600">-{formatMoney(discountAmount)}</span>
+                  </div>
+                )}
+              </div>
+
               {extraServices.length > 0 && (
                 <div className="card p-5">
                   <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
@@ -629,7 +820,7 @@ export function ComparisonPanel(props: Props) {
                 </div>
 
                 {showSaveVersion && (
-                  <div className="mb-3 p-3 rounded-lg bg-brand-50 border border-brand-100 space-y-2">
+                  <div className="mb-3 p-3 rounded-lg bg-brand-50 border border-brand-100 space-y-2.5">
                     <input
                       type="text"
                       placeholder="方案名称，如：基础版、舒适版、升级版..."
@@ -638,9 +829,53 @@ export function ComparisonPanel(props: Props) {
                       className="input-base text-sm"
                       autoFocus
                     />
-                    <div className="flex gap-2 justify-end">
+                    <textarea
+                      placeholder="方案说明（可选）"
+                      value={newVersionDescription}
+                      onChange={e => setNewVersionDescription(e.target.value)}
+                      className="input-base text-sm min-h-[60px] resize-y"
+                    />
+                    <div>
+                      <label className="text-[11px] text-slate-600 mb-1 block">有效期至</label>
+                      <input
+                        type="date"
+                        value={newVersionValidUntil}
+                        onChange={e => setNewVersionValidUntil(e.target.value)}
+                        className="input-base text-sm"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[11px] text-slate-600 mb-1 block">最少人数</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={newVersionMinPeople}
+                          onChange={e => setNewVersionMinPeople(Number(e.target.value) || 1)}
+                          className="input-base text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-slate-600 mb-1 block">最多人数</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={newVersionMaxPeople}
+                          onChange={e => setNewVersionMaxPeople(Number(e.target.value) || 1)}
+                          className="input-base text-sm"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2 justify-end pt-1">
                       <button
-                        onClick={() => { setShowSaveVersion(false); setNewVersionName('') }}
+                        onClick={() => {
+                          setShowSaveVersion(false)
+                          setNewVersionName('')
+                          setNewVersionDescription('')
+                          setNewVersionValidUntil('')
+                          setNewVersionMinPeople(requirement.peopleCount)
+                          setNewVersionMaxPeople(requirement.peopleCount)
+                        }}
                         className="text-xs px-3 py-1.5 rounded-md text-slate-600 hover:bg-slate-100"
                       >取消</button>
                       <button
@@ -659,29 +894,60 @@ export function ComparisonPanel(props: Props) {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {quoteVersions.map(v => (
-                      <div
-                        key={v.id}
-                        className="flex items-center justify-between p-2.5 rounded-lg border border-slate-200 hover:border-brand-300 hover:bg-brand-50/30 transition group"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-bold text-slate-800">{v.name}</div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">
-                            {new Date(v.createdAt).toLocaleString('zh-CN')}
+                    {quoteVersions.map(v => {
+                      const isActive = v.id === currentVersionId
+                      return (
+                        <div
+                          key={v.id}
+                          onClick={() => setCurrentVersionId(v.id)}
+                          className={`p-2.5 rounded-lg border transition cursor-pointer group ${
+                            isActive
+                              ? 'border-green-500 bg-green-50/50 ring-1 ring-green-500'
+                              : 'border-slate-200 hover:border-brand-300 hover:bg-brand-50/30'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0 group/tooltip relative">
+                              <div className="flex items-center gap-1.5">
+                                <div className="text-xs font-bold text-slate-800 truncate">{v.name}</div>
+                                {isActive && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-green-500 text-white font-medium">
+                                    当前
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-slate-400 mt-0.5">
+                                {new Date(v.createdAt).toLocaleString('zh-CN')}
+                              </div>
+                              {v.description && (
+                                <div className="text-[11px] text-slate-500 mt-1 truncate">
+                                  {v.description}
+                                </div>
+                              )}
+                              <div className="flex flex-wrap gap-2 mt-1 text-[10px] text-slate-500">
+                                <span>👥 {v.minPeople}-{v.maxPeople}人</span>
+                                {v.validUntil && <span>📅 至 {v.validUntil}</span>}
+                              </div>
+                              {v.description && (
+                                <div className="hidden group-hover/tooltip:block absolute left-0 bottom-full mb-2 z-50 p-2.5 rounded-lg bg-slate-800 text-white text-[11px] shadow-xl max-w-[240px] whitespace-pre-wrap leading-relaxed">
+                                  {v.description}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex gap-1 flex-shrink-0">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); onApplyQuoteVersion(v.id) }}
+                                className="text-[10px] px-2 py-1 rounded bg-brand-600 text-white hover:bg-brand-700 opacity-0 group-hover:opacity-100 transition"
+                              >应用</button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); onDeleteQuoteVersion(v.id) }}
+                                className="text-[10px] px-2 py-1 rounded text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition"
+                              >删除</button>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => onApplyQuoteVersion(v.id)}
-                            className="text-[10px] px-2 py-1 rounded bg-brand-600 text-white hover:bg-brand-700 opacity-0 group-hover:opacity-100 transition"
-                          >应用</button>
-                          <button
-                            onClick={() => onDeleteQuoteVersion(v.id)}
-                            className="text-[10px] px-2 py-1 rounded text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition"
-                          >删除</button>
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>

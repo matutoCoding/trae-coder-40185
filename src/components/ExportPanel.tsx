@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { BrandConfig, CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan } from '@/types'
+import type { BrandConfig, CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan, ConfirmRecord, QuoteVersion } from '@/types'
 import { generatePDF } from '@/utils/pdf'
 import { formatMoney, getHotelLevelName } from '@/utils/quote'
 import { hotelLevelLabels, ticketPackages } from '@/data/options'
@@ -13,10 +13,16 @@ interface Props {
   setBrand: (b: BrandConfig) => void
   onBack: () => void
   quoteNote: string
+  confirmRecord: ConfirmRecord
+  setConfirmRecord: (r: Partial<ConfirmRecord>) => void
+  discountAmount: number
+  setDiscountAmount: (n: number) => void
+  currentVersionId: string | null
+  quoteVersions: QuoteVersion[]
 }
 
 export function ExportPanel(props: Props) {
-  const { requirement, route, quoteConfig, quote, brand, setBrand, onBack, quoteNote } = props
+  const { requirement, route, quoteConfig, quote, brand, setBrand, onBack, quoteNote, confirmRecord, setConfirmRecord, discountAmount, setDiscountAmount, currentVersionId, quoteVersions } = props
   const [exporting, setExporting] = useState(false)
   const [exportSuccess, setExportSuccess] = useState(false)
   const [activeTab, setActiveTab] = useState<'preview' | 'brand'>('preview')
@@ -25,12 +31,16 @@ export function ExportPanel(props: Props) {
     setBrand({ ...brand, [key]: value })
   }
 
+  const currentVersion = quoteVersions.find(v => v.id === currentVersionId)
+
   const handleExport = async () => {
     setExporting(true)
     setExportSuccess(false)
     try {
       const filename = `${requirement.destination || '川西'}-${route.name}-${requirement.customerName || '客户方案'}.pdf`
-      const ok = await generatePDF(brand, requirement, route, quoteConfig, quote, filename, quoteNote)
+      const versionInfo = currentVersion ? { name: currentVersion.name, description: currentVersion.description, validUntil: currentVersion.validUntil } : undefined
+      const confirmStatus = { status: confirmRecord.status, signedBy: confirmRecord.signedBy, confirmedAt: confirmRecord.confirmedAt }
+      const ok = await generatePDF(brand, requirement, route, quoteConfig, quote, filename, quoteNote, versionInfo, confirmStatus, discountAmount, quote.totalBeforeDiscount)
       setExportSuccess(ok)
       if (ok) setTimeout(() => setExportSuccess(false), 3000)
     } finally {
@@ -203,20 +213,29 @@ export function ExportPanel(props: Props) {
                               { name: '└ 餐饮包', desc: quoteConfig.includeMeals ? '含特色餐' : '未含', value: quote.serviceBreakdown.mealsCost, perPerson: Math.round(quote.serviceBreakdown.mealsCost / requirement.peopleCount), indent: true, muted: !quoteConfig.includeMeals },
                               { name: '增值服务小计', desc: '-', value: quote.serviceCost, perPerson: Math.round(quote.serviceCost / requirement.peopleCount), sub: true },
                               { name: '交通及其他', desc: requirement.transportType === 'rental' ? '含租车' : '自带车', value: quote.otherCost, perPerson: Math.round(quote.otherCost / requirement.peopleCount) },
+                              ...(discountAmount > 0 ? [{ name: '🎟️ 优惠折扣', desc: '顾问优惠', value: -discountAmount, perPerson: -Math.round(discountAmount / requirement.peopleCount), discount: true }] : []),
                               { name: '计划利润', desc: `${quoteConfig.profitMargin}%`, value: quote.profit, perPerson: Math.round(quote.profit / requirement.peopleCount), highlight: true },
                             ].map((row: any, i) => (
-                              <tr key={i} className="border-b border-slate-100 last:border-0">
+                              <tr key={i} className={`border-b border-slate-100 ${row.discount ? 'bg-red-50/60' : ''}`}>
                                 <td className={`py-1.5 pr-2 ${row.indent ? 'pl-4' : ''}`}>
-                                  <div className={`text-[11px] font-semibold ${row.highlight ? 'text-green-600' : row.muted ? 'text-slate-400' : row.sub ? 'text-brand-700' : 'text-slate-700'}`}>{row.name}</div>
+                                  <div className={`text-[11px] font-semibold ${row.discount ? 'text-red-600' : row.highlight ? 'text-green-600' : row.muted ? 'text-slate-400' : row.sub ? 'text-brand-700' : 'text-slate-700'}`}>{row.name}</div>
                                   {row.desc && row.desc !== '-' && <div className="text-[9px] text-slate-400">{row.desc}</div>}
                                 </td>
-                                <td className={`py-1.5 text-right text-[10px] ${row.muted ? 'text-slate-400' : 'text-slate-400'}`}>{row.perPerson > 0 ? formatMoney(row.perPerson) + '/人' : '-'}</td>
-                                <td className={`py-1.5 text-right font-bold ${row.highlight ? 'text-green-600' : row.muted ? 'text-slate-400' : row.sub ? 'text-brand-700' : 'text-slate-800'}`}>
-                                  {formatMoney(row.value)}
+                                <td className={`py-1.5 text-right text-[10px] ${row.discount ? 'text-red-500' : row.muted ? 'text-slate-400' : 'text-slate-400'}`}>{row.perPerson > 0 ? formatMoney(row.perPerson) + '/人' : row.perPerson < 0 ? '-' + formatMoney(Math.abs(row.perPerson)) + '/人' : '-'}</td>
+                                <td className={`py-1.5 text-right font-bold ${row.discount ? 'text-red-600' : row.highlight ? 'text-green-600' : row.muted ? 'text-slate-400' : row.sub ? 'text-brand-700' : 'text-slate-800'}`}>
+                                  {row.value < 0 ? '-' + formatMoney(Math.abs(row.value)) : formatMoney(row.value)}
                                 </td>
                               </tr>
                             ))}
                           </tbody>
+                          {discountAmount > 0 && (
+                            <tfoot>
+                              <tr className="border-t-2 border-green-500 bg-green-50">
+                                <td colSpan={2} className="py-2.5 px-2 text-[12px] font-bold text-green-700">💰 折扣后总计</td>
+                                <td className="py-2.5 pr-2 text-right font-bold text-green-600 text-base">{formatMoney(quote.totalMin)}</td>
+                              </tr>
+                            </tfoot>
+                          )}
                         </table>
                         {quoteNote && (
                           <div className="mt-3 p-3 rounded-lg bg-warm-50 border border-warm-100">
@@ -229,12 +248,56 @@ export function ExportPanel(props: Props) {
                       <div className="space-y-4">
                         <div className="p-5 rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 text-white shadow-lg">
                           <div className="text-xs text-brand-100 mb-1">建议报价区间</div>
-                          <div className="text-3xl font-bold tracking-tight">
-                            {formatMoney(quote.totalMin)}<span className="text-lg opacity-70 mx-1">~</span>{formatMoney(quote.totalMax)}
+                          {discountAmount > 0 && (
+                            <div className="text-[11px] mb-1.5 flex items-center gap-2 flex-wrap">
+                              <span className="line-through opacity-60">原价 {formatMoney(quote.totalBeforeDiscount)}</span>
+                              <span className="text-red-300 font-semibold">-{formatMoney(discountAmount)}</span>
+                            </div>
+                          )}
+                          <div className={`font-bold tracking-tight ${discountAmount > 0 ? 'text-2xl text-green-300' : 'text-3xl'}`}>
+                            {discountAmount > 0 ? '折后价 ' : ''}
+                            {formatMoney(quote.totalMin)}<span className={`opacity-70 mx-1 ${discountAmount > 0 ? 'text-base' : 'text-lg'}`}>~</span>{formatMoney(quote.totalMax)}
                           </div>
                           <div className="mt-2 pt-2 border-t border-white/20 flex justify-between text-[11px]">
                             <span className="text-brand-100">人均 {formatMoney(Math.round(quote.totalMin / requirement.peopleCount))} 起</span>
                             <span className="text-warm-300 font-semibold">毛利率约 {quote.profitMargin}%</span>
+                          </div>
+                        </div>
+
+                        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+                          <div className="text-xs font-bold text-slate-700 mb-2.5 flex items-center gap-1.5">
+                            <span>🎟️</span> 价格调整
+                          </div>
+                          <div className="space-y-2.5">
+                            <div className="flex items-center gap-2">
+                              <label className="text-[11px] text-slate-500 whitespace-nowrap">优惠金额</label>
+                              <input
+                                type="number"
+                                value={discountAmount}
+                                onChange={(e) => setDiscountAmount(Math.max(0, parseInt(e.target.value) || 0))}
+                                className="flex-1 px-2.5 py-1.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+                                placeholder="0"
+                                min={0}
+                              />
+                              <span className="text-[11px] text-slate-500">元</span>
+                            </div>
+                            <div className="flex gap-1.5">
+                              {[-500, -1000, -2000].map((amount) => (
+                                <button
+                                  key={amount}
+                                  onClick={() => setDiscountAmount(Math.max(0, discountAmount + Math.abs(amount)))}
+                                  className="flex-1 py-1.5 text-[11px] bg-white border border-slate-200 rounded-md text-slate-600 hover:bg-slate-100 hover:border-slate-300 transition font-medium"
+                                >
+                                  +{Math.abs(amount)}
+                                </button>
+                              ))}
+                              <button
+                                onClick={() => setDiscountAmount(0)}
+                                className="flex-1 py-1.5 text-[11px] bg-white border border-slate-200 rounded-md text-slate-600 hover:bg-slate-100 hover:border-slate-300 transition font-medium"
+                              >
+                                重置
+                              </button>
+                            </div>
                           </div>
                         </div>
 
@@ -381,6 +444,51 @@ export function ExportPanel(props: Props) {
                     <div className="text-center mb-4">
                       <div className="text-lg font-bold text-brand-800 tracking-wider">行程确认单</div>
                       <div className="w-12 h-0.5 bg-gradient-to-r from-brand-500 to-warm-400 mx-auto mt-1.5 rounded-full" />
+                      <div className="mt-3">
+                        {confirmRecord.status === 'pending' && (
+                          <span className="inline-block px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-[11px] font-semibold">
+                            ⏳ 待确认
+                          </span>
+                        )}
+                        {confirmRecord.status === 'confirmed' && (
+                          <span className="inline-block px-3 py-1 rounded-full bg-green-100 text-green-700 text-[11px] font-semibold">
+                            ✓ 已确认
+                            {confirmRecord.confirmedAt && ` · ${new Date(confirmRecord.confirmedAt).toLocaleDateString('zh-CN')}`}
+                            {confirmRecord.signedBy && ` · ${confirmRecord.signedBy}`}
+                          </span>
+                        )}
+                        {confirmRecord.status === 'revised' && (
+                          <span className="inline-block px-3 py-1 rounded-full bg-orange-100 text-orange-700 text-[11px] font-semibold">
+                            ✏️ 需修改
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mb-4">
+                      <div className="text-[11px] font-bold text-slate-700 mb-2">确认状态</div>
+                      <div className="flex gap-1.5">
+                        {(['pending', 'confirmed', 'revised'] as const).map((status) => (
+                          <button
+                            key={status}
+                            onClick={() => setConfirmRecord({
+                              status,
+                              confirmedAt: status === 'confirmed' ? Date.now() : null,
+                            })}
+                            className={`flex-1 py-1.5 rounded-lg text-[11px] font-medium transition ${
+                              confirmRecord.status === status
+                                ? status === 'pending'
+                                  ? 'bg-slate-200 text-slate-800'
+                                  : status === 'confirmed'
+                                  ? 'bg-green-500 text-white'
+                                  : 'bg-orange-500 text-white'
+                                : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                            }`}
+                          >
+                            {status === 'pending' ? '⏳ 待确认' : status === 'confirmed' ? '✓ 已确认' : '✏️ 需修改'}
+                          </button>
+                        ))}
+                      </div>
                     </div>
 
                     <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 mb-4">
@@ -392,11 +500,47 @@ export function ExportPanel(props: Props) {
                         <div><span className="text-slate-500">出团日期：</span><span className="font-semibold text-slate-800">{requirement.travelDate || '____________'}</span></div>
                         <div className="col-span-2"><span className="text-slate-500">行程方案：</span><span className="font-semibold text-slate-800">{route.name}方案 · {requirement.days}天{requirement.days-1}晚</span></div>
                       </div>
+                      <div className="mt-3 pt-3 border-t border-slate-200 space-y-2.5">
+                        <div>
+                          <label className="text-[11px] text-slate-500 mb-1 block">签字客户名</label>
+                          <input
+                            type="text"
+                            value={confirmRecord.signedBy}
+                            onChange={(e) => setConfirmRecord({ signedBy: e.target.value })}
+                            className="w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                            placeholder="请输入客户姓名"
+                          />
+                        </div>
+                        {confirmRecord.status === 'confirmed' && confirmRecord.confirmedAt && (
+                          <div className="text-[11px] text-slate-500">
+                            确认时间：<span className="font-semibold text-slate-700">{new Date(confirmRecord.confirmedAt).toLocaleString('zh-CN')}</span>
+                          </div>
+                        )}
+                        {confirmRecord.status === 'revised' && (
+                          <div>
+                            <label className="text-[11px] text-slate-500 mb-1 block">修改备注</label>
+                            <textarea
+                              value={confirmRecord.revisionNote}
+                              onChange={(e) => setConfirmRecord({ revisionNote: e.target.value })}
+                              className="w-full px-2.5 py-1.5 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
+                              rows={2}
+                              placeholder="请输入需要修改的内容..."
+                            />
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 p-4 text-white mb-4 text-center">
                       <div className="text-[10px] opacity-80 mb-1">合同总报价（{requirement.peopleCount}人）</div>
-                      <div className="text-xl font-bold tracking-tight">
+                      {discountAmount > 0 && (
+                        <div className="text-[11px] mb-1 flex items-center justify-center gap-1.5 flex-wrap">
+                          <span className="line-through opacity-60">原价 {formatMoney(quote.totalBeforeDiscount)}</span>
+                          <span className="text-red-300 font-semibold">→ 优惠 -{formatMoney(discountAmount)}</span>
+                          <span className="text-green-300 font-semibold">→ 合同价</span>
+                        </div>
+                      )}
+                      <div className={`font-bold tracking-tight ${discountAmount > 0 ? 'text-lg text-green-300' : 'text-xl'}`}>
                         {formatMoney(quote.totalMin)}<span className="text-sm opacity-70 mx-1">~</span>{formatMoney(quote.totalMax)}
                       </div>
                       <div className="text-[10px] opacity-80 mt-1">人均 {formatMoney(Math.round(quote.totalMin / requirement.peopleCount))} 起</div>
@@ -427,10 +571,19 @@ export function ExportPanel(props: Props) {
                       </div>
                       <div>
                         <div className="text-[10px] font-bold text-green-700 mb-2">客户确认</div>
-                        <div className="rounded-lg border border-dashed border-green-300 bg-green-50/50 p-2.5 h-20 flex flex-col justify-end">
-                          <div className="text-[9px] text-slate-400 border-t border-slate-300 pt-1">客户签字</div>
-                          <div className="text-[9px] text-slate-400 mt-0.5">日期：______________</div>
-                        </div>
+                        {confirmRecord.status === 'confirmed' && confirmRecord.signedBy ? (
+                          <div className="rounded-lg border border-green-300 bg-green-50 p-2.5 h-20 flex flex-col justify-center">
+                            <div className="text-[11px] font-bold text-green-700 mb-0.5">✓ {confirmRecord.signedBy} 已确认</div>
+                            {confirmRecord.confirmedAt && (
+                              <div className="text-[9px] text-slate-500">已于 {new Date(confirmRecord.confirmedAt).toLocaleDateString('zh-CN')} 确认</div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-dashed border-green-300 bg-green-50/50 p-2.5 h-20 flex flex-col justify-end">
+                            <div className="text-[9px] text-slate-400 border-t border-slate-300 pt-1">客户签字</div>
+                            <div className="text-[9px] text-slate-400 mt-0.5">日期：______________</div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </section>
@@ -479,6 +632,11 @@ export function ExportPanel(props: Props) {
                   <div className="card p-5 border-l-4" style={{ borderLeftColor: route.accentColor }}>
                     <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2">
                       <span>📊</span> 方案摘要
+                      {currentVersion && (
+                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-brand-100 text-brand-700 font-medium">
+                          v{currentVersion.name}
+                        </span>
+                      )}
                     </h3>
                     <dl className="space-y-2 text-xs">
                       <div className="flex justify-between"><dt className="text-slate-500">方案类型</dt><dd className="font-semibold text-slate-800">{route.name}</dd></div>
@@ -490,9 +648,37 @@ export function ExportPanel(props: Props) {
                       <div className="flex justify-between"><dt className="text-slate-500">领队服务</dt><dd className={`font-semibold ${quoteConfig.includeLeader ? 'text-green-600' : 'text-slate-400'}`}>{quoteConfig.includeLeader ? '已含' : '未含'}</dd></div>
                       <div className="flex justify-between"><dt className="text-slate-500">客户预算</dt><dd className="font-semibold text-slate-800">{formatMoney(requirement.totalBudget)}</dd></div>
                       <div className="h-px bg-slate-100 my-1" />
-                      <div className="flex justify-between"><dt className="text-slate-500">建议报价</dt><dd className="font-bold text-green-600 text-sm">{formatMoney(quote.totalMin)}起</dd></div>
+                      {discountAmount > 0 ? (
+                        <>
+                          <div className="flex justify-between items-center">
+                            <dt className="text-slate-500">原价</dt>
+                            <dd className="font-semibold text-slate-400 line-through">{formatMoney(quote.totalBeforeDiscount)}</dd>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <dt className="text-slate-500">优惠</dt>
+                            <dd className="font-bold text-red-500">-{formatMoney(discountAmount)}</dd>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <dt className="text-slate-500">折后价</dt>
+                            <dd className="font-bold text-green-600 text-base">{formatMoney(quote.totalMin)}起</dd>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex justify-between"><dt className="text-slate-500">建议报价</dt><dd className="font-bold text-green-600 text-sm">{formatMoney(quote.totalMin)}起</dd></div>
+                      )}
                       <div className="flex justify-between"><dt className="text-slate-500">毛利空间</dt><dd className="font-bold text-warm-600 text-sm">~{quote.profitMargin}%</dd></div>
                     </dl>
+                    {quoteNote && (
+                      <div className="mt-3 pt-3 border-t border-slate-100">
+                        <div className="text-[10px] font-bold text-slate-500 mb-1">📝 备注摘要</div>
+                        <div
+                          className="text-[11px] text-slate-600 leading-relaxed"
+                          title={quoteNote}
+                        >
+                          {quoteNote.length > 80 ? quoteNote.slice(0, 80) + '...' : quoteNote}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {quote.warnings.length > 0 && (
