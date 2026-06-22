@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import type { AppStep, CustomerRequirement, QuoteConfig, RoutePlan, BrandConfig, QuoteResult, DailyPlan, QuoteVersion, ConfirmRecord } from '@/types'
+import type { AppStep, CustomerRequirement, QuoteConfig, RoutePlan, BrandConfig, QuoteResult, DailyPlan, QuoteVersion, ConfirmRecord, PaymentRecord, VersionDiff } from '@/types'
 import { generateRoutePlans } from '@/data/routes'
 import { calculateQuote } from '@/utils/quote'
 import { StepHeader } from '@/components/StepHeader'
@@ -16,6 +16,7 @@ const STORAGE_KEYS = {
   quoteNote: 'lushu_quote_note',
   confirmRecord: 'lushu_confirm_record',
   currentVersionId: 'lushu_current_version',
+  paymentRecord: 'lushu_payment_record',
 }
 
 const defaultRequirement: CustomerRequirement = {
@@ -49,6 +50,15 @@ const defaultConfirmRecord: ConfirmRecord = {
   signedBy: '',
   confirmedAt: null,
   revisionNote: '',
+}
+
+const defaultPaymentRecord: PaymentRecord = {
+  paymentStatus: 'unpaid',
+  depositAmount: 0,
+  balanceDueDate: '',
+  totalPaid: 0,
+  depositPaidAt: null,
+  paymentNote: '',
 }
 
 function loadFromStorage<T>(key: string, defaultValue: T): T {
@@ -94,6 +104,7 @@ export default function App() {
   const [quoteNote, setQuoteNote] = useState<string>(() => loadFromStorage<string>(STORAGE_KEYS.quoteNote, ''))
   const [confirmRecord, setConfirmRecord] = useState<ConfirmRecord>(() => loadFromStorage<ConfirmRecord>(STORAGE_KEYS.confirmRecord, defaultConfirmRecord))
   const [currentVersionId, setCurrentVersionId] = useState<string | null>(() => loadFromStorage<string | null>(STORAGE_KEYS.currentVersionId, null))
+  const [paymentRecord, setPaymentRecord] = useState<PaymentRecord>(() => loadFromStorage<PaymentRecord>(STORAGE_KEYS.paymentRecord, defaultPaymentRecord))
 
   useEffect(() => {
     saveToStorage(STORAGE_KEYS.requirement, requirement)
@@ -126,6 +137,10 @@ export default function App() {
   useEffect(() => {
     saveToStorage(STORAGE_KEYS.currentVersionId, currentVersionId)
   }, [currentVersionId])
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEYS.paymentRecord, paymentRecord)
+  }, [paymentRecord])
 
   const baseRoutes = useMemo(
     () => generateRoutePlans(requirement.days, requirement.destination, requirement.includeHiddenGems),
@@ -190,19 +205,73 @@ export default function App() {
       config: { ...quoteConfig },
       note: quoteNote,
       createdAt: Date.now(),
+      confirmRecord: { ...confirmRecord },
+      paymentRecord: { ...paymentRecord },
     }
     setQuoteVersions(prev => [...prev, newVersion])
     setCurrentVersionId(newVersion.id)
-  }, [quoteConfig, quoteNote])
+  }, [quoteConfig, quoteNote, confirmRecord, paymentRecord])
 
   const applyQuoteVersion = useCallback((versionId: string) => {
     const version = quoteVersions.find(v => v.id === versionId)
     if (version) {
       setQuoteConfig(version.config)
       setQuoteNote(version.note)
+      if (version.confirmRecord) setConfirmRecord(version.confirmRecord)
+      if (version.paymentRecord) setPaymentRecord(version.paymentRecord)
       setCurrentVersionId(versionId)
     }
   }, [quoteVersions])
+
+  const duplicateQuoteVersion = useCallback((versionId: string, newName: string) => {
+    const version = quoteVersions.find(v => v.id === versionId)
+    if (version) {
+      const newVersion: QuoteVersion = {
+        ...version,
+        id: 'qv_' + Date.now(),
+        name: newName,
+        createdAt: Date.now(),
+        config: { ...version.config },
+      }
+      setQuoteVersions(prev => [...prev, newVersion])
+    }
+  }, [quoteVersions])
+
+  const computeVersionDiff = useCallback((fromId: string, toId: string): VersionDiff | null => {
+    const from = quoteVersions.find(v => v.id === fromId)
+    const to = quoteVersions.find(v => v.id === toId)
+    if (!from || !to) return null
+
+    const hotelLevel = from.config.selectedHotelLevel !== to.config.selectedHotelLevel
+      ? { from: from.config.selectedHotelLevel, to: to.config.selectedHotelLevel }
+      : null
+    const tickets = from.config.selectedTickets.join('|') !== to.config.selectedTickets.join('|')
+      ? { from: from.config.selectedTickets, to: to.config.selectedTickets }
+      : null
+    const services = {
+      leader: from.config.includeLeader !== to.config.includeLeader ? { from: from.config.includeLeader, to: to.config.includeLeader } : null,
+      rescue: from.config.includeRescue !== to.config.includeRescue ? { from: from.config.includeRescue, to: to.config.includeRescue } : null,
+      insurance: from.config.includeInsurance !== to.config.includeInsurance ? { from: from.config.includeInsurance, to: to.config.includeInsurance } : null,
+      meals: from.config.includeMeals !== to.config.includeMeals ? { from: from.config.includeMeals, to: to.config.includeMeals } : null,
+    }
+    const profitMargin = from.config.profitMargin !== to.config.profitMargin
+      ? { from: from.config.profitMargin, to: to.config.profitMargin }
+      : null
+    const discount = from.config.discountAmount !== to.config.discountAmount
+      ? { from: from.config.discountAmount || 0, to: to.config.discountAmount || 0 }
+      : null
+
+    const fromQuote = calculateQuote(requirement, selectedRoute, from.config)
+    const toQuote = calculateQuote(requirement, selectedRoute, to.config)
+    const totalMin = fromQuote.totalMin !== toQuote.totalMin
+      ? { from: fromQuote.totalMin, to: toQuote.totalMin, diff: toQuote.totalMin - fromQuote.totalMin }
+      : null
+    const totalMax = fromQuote.totalMax !== toQuote.totalMax
+      ? { from: fromQuote.totalMax, to: toQuote.totalMax, diff: toQuote.totalMax - fromQuote.totalMax }
+      : null
+
+    return { hotelLevel, tickets, services, profitMargin, discount, totalMin, totalMax }
+  }, [quoteVersions, requirement, selectedRoute])
 
   const updateDiscount = useCallback((amount: number) => {
     setQuoteConfig(prev => ({ ...prev, discountAmount: amount }))
@@ -219,6 +288,19 @@ export default function App() {
       return next
     })
   }, [])
+
+  const updatePaymentRecord = useCallback((record: Partial<PaymentRecord>) => {
+    setPaymentRecord(prev => {
+      const next = { ...prev, ...record }
+      if (next.totalPaid <= 0) next.paymentStatus = 'unpaid'
+      else if (next.totalPaid >= quote.totalMin) next.paymentStatus = 'paid'
+      else next.paymentStatus = 'partial'
+      if (record.totalPaid && record.totalPaid > 0 && !prev.depositPaidAt) {
+        next.depositPaidAt = Date.now()
+      }
+      return next
+    })
+  }, [quote.totalMin])
 
   const deleteQuoteVersion = useCallback((versionId: string) => {
     setQuoteVersions(prev => prev.filter(v => v.id !== versionId))
@@ -264,11 +346,15 @@ export default function App() {
             onSaveQuoteVersion={saveQuoteVersion}
             onApplyQuoteVersion={applyQuoteVersion}
             onDeleteQuoteVersion={deleteQuoteVersion}
+            onDuplicateQuoteVersion={duplicateQuoteVersion}
+            onComputeVersionDiff={computeVersionDiff}
             currentVersionId={currentVersionId}
             setCurrentVersionId={setCurrentVersionId}
             confirmRecord={confirmRecord}
             setConfirmRecord={updateConfirmRecord}
-            discountAmount={quoteConfig.discountAmount || 0}
+            paymentRecord={paymentRecord}
+            setPaymentRecord={updatePaymentRecord}
+            discountAmount={quote.discountAmount}
             setDiscountAmount={updateDiscount}
           />
         )}
@@ -284,7 +370,9 @@ export default function App() {
             quoteNote={quoteNote}
             confirmRecord={confirmRecord}
             setConfirmRecord={updateConfirmRecord}
-            discountAmount={quoteConfig.discountAmount || 0}
+            paymentRecord={paymentRecord}
+            setPaymentRecord={updatePaymentRecord}
+            discountAmount={quote.discountAmount}
             setDiscountAmount={updateDiscount}
             currentVersionId={currentVersionId}
             quoteVersions={quoteVersions}

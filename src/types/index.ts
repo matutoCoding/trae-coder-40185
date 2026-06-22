@@ -113,6 +113,17 @@ export interface ConfirmRecord {
   revisionNote: string
 }
 
+export type PaymentStatus = 'unpaid' | 'partial' | 'paid'
+
+export interface PaymentRecord {
+  paymentStatus: PaymentStatus
+  depositAmount: number
+  balanceDueDate: string
+  totalPaid: number
+  depositPaidAt: number | null
+  paymentNote: string
+}
+
 export interface QuoteVersion {
   id: string
   name: string
@@ -123,6 +134,23 @@ export interface QuoteVersion {
   config: QuoteConfig
   note: string
   createdAt: number
+  confirmRecord?: ConfirmRecord
+  paymentRecord?: PaymentRecord
+}
+
+export interface VersionDiff {
+  hotelLevel: { from: string; to: string } | null
+  tickets: { from: string[]; to: string[] } | null
+  services: {
+    leader: { from: boolean; to: boolean } | null
+    rescue: { from: boolean; to: boolean } | null
+    insurance: { from: boolean; to: boolean } | null
+    meals: { from: boolean; to: boolean } | null
+  }
+  profitMargin: { from: number; to: number } | null
+  discount: { from: number; to: number } | null
+  totalMin: { from: number; to: number; diff: number } | null
+  totalMax: { from: number; to: number; diff: number } | null
 }
 
 export interface BrandConfig {

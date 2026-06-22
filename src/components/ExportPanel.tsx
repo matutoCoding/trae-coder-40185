@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { BrandConfig, CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan, ConfirmRecord, QuoteVersion } from '@/types'
+import type { BrandConfig, CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan, ConfirmRecord, QuoteVersion, PaymentRecord } from '@/types'
 import { generatePDF } from '@/utils/pdf'
 import { formatMoney, getHotelLevelName } from '@/utils/quote'
 import { hotelLevelLabels, ticketPackages } from '@/data/options'
@@ -15,6 +15,8 @@ interface Props {
   quoteNote: string
   confirmRecord: ConfirmRecord
   setConfirmRecord: (r: Partial<ConfirmRecord>) => void
+  paymentRecord: PaymentRecord
+  setPaymentRecord: (r: Partial<PaymentRecord>) => void
   discountAmount: number
   setDiscountAmount: (n: number) => void
   currentVersionId: string | null
@@ -22,7 +24,7 @@ interface Props {
 }
 
 export function ExportPanel(props: Props) {
-  const { requirement, route, quoteConfig, quote, brand, setBrand, onBack, quoteNote, confirmRecord, setConfirmRecord, discountAmount, setDiscountAmount, currentVersionId, quoteVersions } = props
+  const { requirement, route, quoteConfig, quote, brand, setBrand, onBack, quoteNote, confirmRecord, setConfirmRecord, paymentRecord, setPaymentRecord, discountAmount, setDiscountAmount, currentVersionId, quoteVersions } = props
   const [exporting, setExporting] = useState(false)
   const [exportSuccess, setExportSuccess] = useState(false)
   const [activeTab, setActiveTab] = useState<'preview' | 'brand'>('preview')
@@ -38,9 +40,10 @@ export function ExportPanel(props: Props) {
     setExportSuccess(false)
     try {
       const filename = `${requirement.destination || '川西'}-${route.name}-${requirement.customerName || '客户方案'}.pdf`
-      const versionInfo = currentVersion ? { name: currentVersion.name, description: currentVersion.description, validUntil: currentVersion.validUntil } : undefined
-      const confirmStatus = { status: confirmRecord.status, signedBy: confirmRecord.signedBy, confirmedAt: confirmRecord.confirmedAt }
-      const ok = await generatePDF(brand, requirement, route, quoteConfig, quote, filename, quoteNote, versionInfo, confirmStatus, discountAmount, quote.totalBeforeDiscount)
+      const versionInfo = currentVersion ? { name: currentVersion.name, description: currentVersion.description, validUntil: currentVersion.validUntil, minPeople: currentVersion.minPeople, maxPeople: currentVersion.maxPeople } : undefined
+      const paymentInfo = { paymentStatus: paymentRecord.paymentStatus, depositAmount: paymentRecord.depositAmount, totalPaid: paymentRecord.totalPaid, balanceDueDate: paymentRecord.balanceDueDate, balanceAmount: Math.max(0, quote.totalMin - paymentRecord.totalPaid) }
+      const confirmInfo = { status: confirmRecord.status, signedBy: confirmRecord.signedBy, confirmedAt: confirmRecord.confirmedAt }
+      const ok = await generatePDF(brand, requirement, route, quoteConfig, quote, filename, quoteNote, versionInfo, paymentInfo, confirmInfo)
       setExportSuccess(ok)
       if (ok) setTimeout(() => setExportSuccess(false), 3000)
     } finally {
@@ -86,6 +89,264 @@ export function ExportPanel(props: Props) {
             {activeTab === 'preview' ? (
               <>
                 <div className="col-span-8 space-y-6">
+                  <section className="card p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                        <span className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold">0</span>
+                        合同摘要页
+                      </h3>
+                      <span className="text-xs text-slate-400">第 0 页 · 发客户首选</span>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="rounded-xl bg-gradient-to-br from-indigo-50 to-brand-50 border border-indigo-100 p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-lg font-bold text-slate-800 truncate">
+                              {currentVersion ? currentVersion.name : '当前配置'}
+                            </div>
+                            {currentVersion?.description && (
+                              <div className="text-xs text-slate-500 mt-1">{currentVersion.description}</div>
+                            )}
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-[11px] text-slate-600">
+                              {currentVersion?.validUntil && (
+                                <span className="flex items-center gap-1">
+                                  <span className="text-slate-400">有效期至</span>
+                                  <span className="font-semibold">{currentVersion.validUntil}</span>
+                                </span>
+                              )}
+                              <span className="flex items-center gap-1">
+                                <span className="text-slate-400">适用</span>
+                                <span className="font-semibold">
+                                  {currentVersion ? `${currentVersion.minPeople}-${currentVersion.maxPeople}人` : `${requirement.peopleCount}人`}
+                                </span>
+                              </span>
+                              {requirement.travelDate && (
+                                <span className="flex items-center gap-1">
+                                  <span className="text-slate-400">出团日期</span>
+                                  <span className="font-semibold">{requirement.travelDate}</span>
+                                </span>
+                              )}
+                              {requirement.destination && (
+                                <span className="flex items-center gap-1">
+                                  <span className="text-slate-400">目的地</span>
+                                  <span className="font-semibold">{requirement.destination}</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="w-12 h-12 rounded-xl bg-indigo-500/10 flex items-center justify-center text-2xl flex-shrink-0">
+                            📋
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+                          <div className="text-xs font-bold text-slate-700 mb-3">确认状态</div>
+                          <div className="mb-3">
+                            {confirmRecord.status === 'pending' && (
+                              <span className="inline-block px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-[11px] font-semibold">
+                                ⏳ 待确认
+                              </span>
+                            )}
+                            {confirmRecord.status === 'confirmed' && (
+                              <span className="inline-block px-3 py-1 rounded-full bg-green-100 text-green-700 text-[11px] font-semibold">
+                                ✓ 已确认
+                              </span>
+                            )}
+                            {confirmRecord.status === 'revised' && (
+                              <span className="inline-block px-3 py-1 rounded-full bg-orange-100 text-orange-700 text-[11px] font-semibold">
+                                ✏️ 需修改
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex gap-1.5 mb-3">
+                            {(['pending', 'confirmed', 'revised'] as const).map((status) => (
+                              <button
+                                key={status}
+                                onClick={() => setConfirmRecord({
+                                  status,
+                                  confirmedAt: status === 'confirmed' ? Date.now() : null,
+                                })}
+                                className={`flex-1 py-1 rounded-md text-[10px] font-medium transition ${
+                                  confirmRecord.status === status
+                                    ? status === 'pending'
+                                      ? 'bg-slate-200 text-slate-800'
+                                      : status === 'confirmed'
+                                      ? 'bg-green-500 text-white'
+                                      : 'bg-orange-500 text-white'
+                                    : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-200'
+                                }`}
+                              >
+                                {status === 'pending' ? '待确认' : status === 'confirmed' ? '已确认' : '需修改'}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="space-y-1.5 text-[11px]">
+                            <div><span className="text-slate-500">客户姓名：</span><span className="font-semibold text-slate-800">{requirement.customerName || '-'}</span></div>
+                            <div><span className="text-slate-500">联系电话：</span><span className="font-semibold text-slate-800">{requirement.phone || '-'}</span></div>
+                            <div><span className="text-slate-500">出行人数：</span><span className="font-semibold text-slate-800">{requirement.peopleCount}人</span></div>
+                          </div>
+                          {confirmRecord.status === 'confirmed' && (
+                            <div className="mt-3 pt-3 border-t border-slate-200 space-y-1 text-[11px]">
+                              {confirmRecord.signedBy && (
+                                <div><span className="text-slate-500">签字人：</span><span className="font-semibold text-green-700">{confirmRecord.signedBy}</span></div>
+                              )}
+                              {confirmRecord.confirmedAt && (
+                                <div><span className="text-slate-500">确认时间：</span><span className="font-semibold text-slate-700">{new Date(confirmRecord.confirmedAt).toLocaleString('zh-CN')}</span></div>
+                              )}
+                            </div>
+                          )}
+                          {confirmRecord.status === 'revised' && (
+                            <div className="mt-3 pt-3 border-t border-slate-200">
+                              <label className="text-[10px] text-slate-500 mb-1 block">修改备注</label>
+                              <textarea
+                                value={confirmRecord.revisionNote}
+                                onChange={(e) => setConfirmRecord({ revisionNote: e.target.value })}
+                                className="w-full px-2 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
+                                rows={2}
+                                placeholder="请输入修改内容..."
+                              />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl bg-warm-50/60 border border-warm-200 p-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="text-xs font-bold text-warm-700">收款计划</div>
+                            <div>
+                              {paymentRecord.paymentStatus === 'unpaid' && (
+                                <span className="inline-block px-2 py-0.5 rounded-full bg-red-100 text-red-600 text-[10px] font-semibold">未收款</span>
+                              )}
+                              {paymentRecord.paymentStatus === 'partial' && (
+                                <span className="inline-block px-2 py-0.5 rounded-full bg-warm-100 text-warm-700 text-[10px] font-semibold">部分收款</span>
+                              )}
+                              {paymentRecord.paymentStatus === 'paid' && (
+                                <span className="inline-block px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-[10px] font-semibold">已结清</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="space-y-1.5 mb-3">
+                            <div className="flex justify-between items-center text-[11px]">
+                              <span className="text-slate-500">应收（折扣后）</span>
+                              <span className="font-bold text-slate-800">{formatMoney(quote.totalMin)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-[11px]">
+                              <span className="text-slate-500">已收</span>
+                              <span className="font-bold text-green-600">{formatMoney(paymentRecord.totalPaid)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-[12px]">
+                              <span className="text-slate-500">待收</span>
+                              <span className="font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">{formatMoney(Math.max(0, quote.totalMin - paymentRecord.totalPaid))}</span>
+                            </div>
+                          </div>
+                          <div className="space-y-2 border-t border-warm-200/60 pt-3">
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] text-slate-500 mb-0.5 block">已收金额</label>
+                                <input
+                                  type="number"
+                                  value={paymentRecord.totalPaid}
+                                  onChange={(e) => setPaymentRecord({ totalPaid: Math.max(0, parseInt(e.target.value) || 0) })}
+                                  className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-warm-500 focus:border-transparent"
+                                  min={0}
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-slate-500 mb-0.5 block">定金金额</label>
+                                <input
+                                  type="number"
+                                  value={paymentRecord.depositAmount}
+                                  onChange={(e) => setPaymentRecord({ depositAmount: Math.max(0, parseInt(e.target.value) || 0) })}
+                                  className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-warm-500 focus:border-transparent"
+                                  min={0}
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-500 mb-0.5 block">尾款截止日期</label>
+                              <input
+                                type="date"
+                                value={paymentRecord.balanceDueDate}
+                                onChange={(e) => setPaymentRecord({ balanceDueDate: e.target.value })}
+                                className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-warm-500 focus:border-transparent"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-500 mb-0.5 block">收款备注</label>
+                              <input
+                                type="text"
+                                value={paymentRecord.paymentNote}
+                                onChange={(e) => setPaymentRecord({ paymentNote: e.target.value })}
+                                className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-warm-500 focus:border-transparent"
+                                placeholder="如：银行转账/微信等"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 overflow-hidden">
+                        <div className="bg-slate-50 px-4 py-2 border-b border-slate-200">
+                          <div className="text-xs font-bold text-slate-700">费用总览</div>
+                        </div>
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-slate-50/50 border-b border-slate-100">
+                              <th className="text-left py-2 px-3 text-[10px] font-semibold text-slate-500">项目</th>
+                              <th className="text-left py-2 px-3 text-[10px] font-semibold text-slate-500">说明</th>
+                              <th className="text-right py-2 px-3 text-[10px] font-semibold text-slate-500">总价(¥)</th>
+                              <th className="text-right py-2 px-3 text-[10px] font-semibold text-slate-500">人均(¥)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[
+                              { name: '酒店住宿', desc: `${hotelLevelLabels[quoteConfig.selectedHotelLevel]} × ${requirement.days - 1}晚`, value: quote.hotelCost },
+                              { name: '门票组合', desc: selectedTickets || '客户自理', value: quote.ticketCost },
+                              { name: '增值服务', desc: '领队/救援/保险/餐饮', value: quote.serviceCost },
+                              { name: '交通及其他', desc: requirement.transportType === 'rental' ? '含租车' : '自带车', value: quote.otherCost },
+                              { name: '计划利润', desc: `${quoteConfig.profitMargin}%`, value: quote.profit, highlight: true },
+                              ...(quote.discountAmount > 0 ? [{ name: '🎟️ 优惠折扣', desc: '顾问优惠', value: -quote.discountAmount, discount: true }] : []),
+                            ].map((row: any, i) => (
+                              <tr key={i} className={`border-b border-slate-100 ${row.discount ? 'bg-red-50/50' : ''}`}>
+                                <td className={`py-1.5 px-3 text-[11px] font-semibold ${row.discount ? 'text-red-600' : row.highlight ? 'text-green-600' : 'text-slate-700'}`}>{row.name}</td>
+                                <td className="py-1.5 px-3 text-[10px] text-slate-400">{row.desc}</td>
+                                <td className={`py-1.5 px-3 text-right font-semibold ${row.discount ? 'text-red-600' : row.highlight ? 'text-green-600' : 'text-slate-700'}`}>
+                                  {row.value < 0 ? '-' + formatMoney(Math.abs(row.value)) : formatMoney(row.value)}
+                                </td>
+                                <td className={`py-1.5 px-3 text-right ${row.discount ? 'text-red-500' : 'text-slate-500'}`}>
+                                  {row.value !== 0 ? (row.value > 0 ? formatMoney(Math.round(row.value / requirement.peopleCount)) : '-' + formatMoney(Math.round(Math.abs(row.value) / requirement.peopleCount))) : '-'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr className="bg-green-50">
+                              <td colSpan={2} className="py-2 px-3 text-[11px] font-bold text-green-700">💰 折扣后总价</td>
+                              <td className="py-2 px-3 text-right font-bold text-green-600 text-sm">{formatMoney(quote.totalMin)}</td>
+                              <td className="py-2 px-3 text-right font-bold text-green-600">{formatMoney(Math.round(quote.totalMin / requirement.peopleCount))}</td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+
+                      {quoteNote && (
+                        <div className="rounded-xl bg-warm-50 border border-warm-100 p-4">
+                          <div className="text-[11px] font-bold text-warm-700 mb-1.5 flex items-center gap-1">
+                            <span>📝</span> 报价备注摘要
+                          </div>
+                          <div
+                            className="text-[11px] text-warm-600 whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto"
+                            title={quoteNote}
+                          >
+                            {quoteNote}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+
                   <section className="card overflow-hidden">
                     <div
                       className="relative h-80 bg-gradient-to-br from-brand-800 via-brand-700 to-brand-600 flex items-center p-10 overflow-hidden"
@@ -213,7 +474,7 @@ export function ExportPanel(props: Props) {
                               { name: '└ 餐饮包', desc: quoteConfig.includeMeals ? '含特色餐' : '未含', value: quote.serviceBreakdown.mealsCost, perPerson: Math.round(quote.serviceBreakdown.mealsCost / requirement.peopleCount), indent: true, muted: !quoteConfig.includeMeals },
                               { name: '增值服务小计', desc: '-', value: quote.serviceCost, perPerson: Math.round(quote.serviceCost / requirement.peopleCount), sub: true },
                               { name: '交通及其他', desc: requirement.transportType === 'rental' ? '含租车' : '自带车', value: quote.otherCost, perPerson: Math.round(quote.otherCost / requirement.peopleCount) },
-                              ...(discountAmount > 0 ? [{ name: '🎟️ 优惠折扣', desc: '顾问优惠', value: -discountAmount, perPerson: -Math.round(discountAmount / requirement.peopleCount), discount: true }] : []),
+                              ...(quote.discountAmount > 0 ? [{ name: '🎟️ 优惠折扣', desc: '顾问优惠', value: -quote.discountAmount, perPerson: -Math.round(quote.discountAmount / requirement.peopleCount), discount: true }] : []),
                               { name: '计划利润', desc: `${quoteConfig.profitMargin}%`, value: quote.profit, perPerson: Math.round(quote.profit / requirement.peopleCount), highlight: true },
                             ].map((row: any, i) => (
                               <tr key={i} className={`border-b border-slate-100 ${row.discount ? 'bg-red-50/60' : ''}`}>
@@ -228,7 +489,7 @@ export function ExportPanel(props: Props) {
                               </tr>
                             ))}
                           </tbody>
-                          {discountAmount > 0 && (
+                          {quote.discountAmount > 0 && (
                             <tfoot>
                               <tr className="border-t-2 border-green-500 bg-green-50">
                                 <td colSpan={2} className="py-2.5 px-2 text-[12px] font-bold text-green-700">💰 折扣后总计</td>
@@ -248,15 +509,15 @@ export function ExportPanel(props: Props) {
                       <div className="space-y-4">
                         <div className="p-5 rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 text-white shadow-lg">
                           <div className="text-xs text-brand-100 mb-1">建议报价区间</div>
-                          {discountAmount > 0 && (
+                          {quote.discountAmount > 0 && (
                             <div className="text-[11px] mb-1.5 flex items-center gap-2 flex-wrap">
                               <span className="line-through opacity-60">原价 {formatMoney(quote.totalBeforeDiscount)}</span>
-                              <span className="text-red-300 font-semibold">-{formatMoney(discountAmount)}</span>
+                              <span className="text-red-300 font-semibold">-{formatMoney(quote.discountAmount)}</span>
                             </div>
                           )}
-                          <div className={`font-bold tracking-tight ${discountAmount > 0 ? 'text-2xl text-green-300' : 'text-3xl'}`}>
-                            {discountAmount > 0 ? '折后价 ' : ''}
-                            {formatMoney(quote.totalMin)}<span className={`opacity-70 mx-1 ${discountAmount > 0 ? 'text-base' : 'text-lg'}`}>~</span>{formatMoney(quote.totalMax)}
+                          <div className={`font-bold tracking-tight ${quote.discountAmount > 0 ? 'text-2xl text-green-300' : 'text-3xl'}`}>
+                            {quote.discountAmount > 0 ? '折后价 ' : ''}
+                            {formatMoney(quote.totalMin)}<span className={`opacity-70 mx-1 ${quote.discountAmount > 0 ? 'text-base' : 'text-lg'}`}>~</span>{formatMoney(quote.totalMax)}
                           </div>
                           <div className="mt-2 pt-2 border-t border-white/20 flex justify-between text-[11px]">
                             <span className="text-brand-100">人均 {formatMoney(Math.round(quote.totalMin / requirement.peopleCount))} 起</span>
@@ -533,14 +794,14 @@ export function ExportPanel(props: Props) {
 
                     <div className="rounded-xl bg-gradient-to-br from-brand-600 to-brand-800 p-4 text-white mb-4 text-center">
                       <div className="text-[10px] opacity-80 mb-1">合同总报价（{requirement.peopleCount}人）</div>
-                      {discountAmount > 0 && (
+                      {quote.discountAmount > 0 && (
                         <div className="text-[11px] mb-1 flex items-center justify-center gap-1.5 flex-wrap">
                           <span className="line-through opacity-60">原价 {formatMoney(quote.totalBeforeDiscount)}</span>
-                          <span className="text-red-300 font-semibold">→ 优惠 -{formatMoney(discountAmount)}</span>
+                          <span className="text-red-300 font-semibold">→ 优惠 -{formatMoney(quote.discountAmount)}</span>
                           <span className="text-green-300 font-semibold">→ 合同价</span>
                         </div>
                       )}
-                      <div className={`font-bold tracking-tight ${discountAmount > 0 ? 'text-lg text-green-300' : 'text-xl'}`}>
+                      <div className={`font-bold tracking-tight ${quote.discountAmount > 0 ? 'text-lg text-green-300' : 'text-xl'}`}>
                         {formatMoney(quote.totalMin)}<span className="text-sm opacity-70 mx-1">~</span>{formatMoney(quote.totalMax)}
                       </div>
                       <div className="text-[10px] opacity-80 mt-1">人均 {formatMoney(Math.round(quote.totalMin / requirement.peopleCount))} 起</div>
@@ -648,7 +909,7 @@ export function ExportPanel(props: Props) {
                       <div className="flex justify-between"><dt className="text-slate-500">领队服务</dt><dd className={`font-semibold ${quoteConfig.includeLeader ? 'text-green-600' : 'text-slate-400'}`}>{quoteConfig.includeLeader ? '已含' : '未含'}</dd></div>
                       <div className="flex justify-between"><dt className="text-slate-500">客户预算</dt><dd className="font-semibold text-slate-800">{formatMoney(requirement.totalBudget)}</dd></div>
                       <div className="h-px bg-slate-100 my-1" />
-                      {discountAmount > 0 ? (
+                      {quote.discountAmount > 0 ? (
                         <>
                           <div className="flex justify-between items-center">
                             <dt className="text-slate-500">原价</dt>
@@ -656,7 +917,7 @@ export function ExportPanel(props: Props) {
                           </div>
                           <div className="flex justify-between items-center">
                             <dt className="text-slate-500">优惠</dt>
-                            <dd className="font-bold text-red-500">-{formatMoney(discountAmount)}</dd>
+                            <dd className="font-bold text-red-500">-{formatMoney(quote.discountAmount)}</dd>
                           </div>
                           <div className="flex justify-between items-center">
                             <dt className="text-slate-500">折后价</dt>

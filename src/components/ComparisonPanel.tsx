@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan, DailyPlan, QuoteVersion, ConfirmRecord, ConfirmStatus } from '@/types'
+import type { CustomerRequirement, QuoteConfig, QuoteResult, RoutePlan, DailyPlan, QuoteVersion, ConfirmRecord, ConfirmStatus, PaymentRecord, VersionDiff } from '@/types'
 import { hotelOptions, hotelLevelLabels, ticketPackages, extraServices } from '@/data/options'
 import { formatMoney } from '@/utils/quote'
 
@@ -28,6 +28,10 @@ interface Props {
   onSaveQuoteVersion: (data: { name: string; description: string; validUntil: string; minPeople: number; maxPeople: number }) => void
   onApplyQuoteVersion: (id: string) => void
   onDeleteQuoteVersion: (id: string) => void
+  onDuplicateQuoteVersion: (versionId: string, newName: string) => void
+  onComputeVersionDiff: (fromId: string, toId: string) => VersionDiff | null
+  paymentRecord: PaymentRecord
+  setPaymentRecord: (r: Partial<PaymentRecord>) => void
 }
 
 export function ComparisonPanel(props: Props) {
@@ -40,6 +44,8 @@ export function ComparisonPanel(props: Props) {
     confirmRecord, setConfirmRecord,
     discountAmount, setDiscountAmount,
     onSaveQuoteVersion, onApplyQuoteVersion, onDeleteQuoteVersion,
+    onDuplicateQuoteVersion, onComputeVersionDiff,
+    paymentRecord, setPaymentRecord,
   } = props
 
   const selectedRoute = routes.find(r => r.id === selectedRouteId) || routes[0]
@@ -54,6 +60,14 @@ export function ComparisonPanel(props: Props) {
   const [newVersionMinPeople, setNewVersionMinPeople] = useState(requirement.peopleCount)
   const [newVersionMaxPeople, setNewVersionMaxPeople] = useState(requirement.peopleCount)
   const [showNoteFull, setShowNoteFull] = useState(false)
+
+  const [diffModalOpen, setDiffModalOpen] = useState(false)
+  const [diffFromId, setDiffFromId] = useState<string>('')
+  const [diffToId, setDiffToId] = useState<string>('')
+
+  const [duplicateModalOpen, setDuplicateModalOpen] = useState(false)
+  const [duplicateVersionId, setDuplicateVersionId] = useState<string>('')
+  const [duplicateNewName, setDuplicateNewName] = useState('')
 
   const toggleTicket = (id: string) => {
     const exists = quoteConfig.selectedTickets.includes(id)
@@ -134,6 +148,32 @@ export function ComparisonPanel(props: Props) {
     }
   }
 
+  const openDuplicateModal = (version: QuoteVersion) => {
+    setDuplicateVersionId(version.id)
+    setDuplicateNewName(`${version.name}-副本`)
+    setDuplicateModalOpen(true)
+  }
+
+  const handleDuplicateConfirm = () => {
+    if (duplicateNewName.trim() && duplicateVersionId) {
+      onDuplicateQuoteVersion(duplicateVersionId, duplicateNewName.trim())
+    }
+    setDuplicateModalOpen(false)
+    setDuplicateVersionId('')
+    setDuplicateNewName('')
+  }
+
+  const openDiffModal = (versionId?: string) => {
+    const otherVersions = quoteVersions.filter(v => v.id !== versionId)
+    const fromId = versionId || currentVersionId || quoteVersions[0]?.id || ''
+    const defaultToId = otherVersions.length > 0
+      ? otherVersions.sort((a, b) => b.createdAt - a.createdAt)[0].id
+      : (quoteVersions.find(v => v.id !== fromId)?.id || '')
+    setDiffFromId(fromId)
+    setDiffToId(defaultToId)
+    setDiffModalOpen(true)
+  }
+
   const updateConfirmStatus = (status: ConfirmStatus) => {
     if (setConfirmRecord) {
       setConfirmRecord({
@@ -148,6 +188,30 @@ export function ComparisonPanel(props: Props) {
     if (setConfirmRecord) {
       setConfirmRecord({ ...confirmRecord, [key]: value })
     }
+  }
+
+  const totalReceivable = quote.totalMin
+  const totalPaid = paymentRecord.totalPaid
+  const balanceDue = Math.max(0, totalReceivable - totalPaid)
+
+  const paymentStatusBadge = (() => {
+    switch (paymentRecord.paymentStatus) {
+      case 'unpaid':
+        return { label: '未收款', className: 'bg-slate-100 text-slate-600 border-slate-200' }
+      case 'partial':
+        return { label: '部分收款', className: 'bg-orange-100 text-orange-700 border-orange-200' }
+      case 'paid':
+        return { label: '已结清', className: 'bg-green-100 text-green-700 border-green-200' }
+    }
+  })()
+
+  const updatePaymentStatus = (status: PaymentRecord['paymentStatus']) => {
+    setPaymentRecord({
+      paymentStatus: status,
+      depositPaidAt: status === 'paid' || (status === 'partial' && !paymentRecord.depositPaidAt)
+        ? Date.now()
+        : paymentRecord.depositPaidAt,
+    })
   }
 
   return (
@@ -543,23 +607,23 @@ export function ComparisonPanel(props: Props) {
                       <span className="text-[11px] text-green-500 w-16 text-right">{formatMoney(profitPerPerson)}</span>
                     </span>
                   </div>
-                  {discountAmount > 0 && (
+                  {quote.discountAmount > 0 && (
                     <div className="flex justify-between items-center text-slate-600 py-1">
                       <span>🎁 优惠折扣</span>
                       <span className="flex gap-6">
-                        <span className="font-medium text-red-600">-{formatMoney(discountAmount)}</span>
-                        <span className="text-[11px] text-red-500 w-16 text-right">-{formatMoney(Math.round(discountAmount / peopleCount))}</span>
+                        <span className="font-medium text-red-600">-{formatMoney(quote.discountAmount)}</span>
+                        <span className="text-[11px] text-red-500 w-16 text-right">-{formatMoney(Math.round(quote.discountAmount / peopleCount))}</span>
                       </span>
                     </div>
                   )}
                 </div>
 
-                {discountAmount > 0 && (
+                {quote.discountAmount > 0 && (
                   <div className="mb-3 p-3 rounded-xl bg-green-50 border border-green-200">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-green-700 font-medium">折扣后总价</span>
                       <span className="text-lg font-bold text-green-600">
-                        {formatMoney(Math.max(0, quote.totalMin - discountAmount))}
+                        {formatMoney(quote.totalMin)}
                         <span className="text-xs text-green-500 font-normal ml-1">起</span>
                       </span>
                     </div>
@@ -768,10 +832,10 @@ export function ComparisonPanel(props: Props) {
                     className="text-[11px] px-2.5 py-1.5 rounded-md bg-red-50 text-red-600 hover:bg-red-100 transition"
                   >重置</button>
                 </div>
-                {discountAmount > 0 && (
+                {quote.discountAmount > 0 && (
                   <div className="mt-3 p-2.5 rounded-lg bg-green-50 border border-green-100 text-[11px]">
                     <span className="text-green-700">已优惠：</span>
-                    <span className="font-bold text-green-600">-{formatMoney(discountAmount)}</span>
+                    <span className="font-bold text-green-600">-{formatMoney(quote.discountAmount)}</span>
                   </div>
                 )}
               </div>
@@ -936,6 +1000,18 @@ export function ComparisonPanel(props: Props) {
                             </div>
                             <div className="flex gap-1 flex-shrink-0">
                               <button
+                                onClick={(e) => { e.stopPropagation(); openDuplicateModal(v) }}
+                                className="text-[10px] px-2 py-1 rounded text-slate-600 hover:bg-slate-100 opacity-0 group-hover:opacity-100 transition"
+                                title="复制为新版本"
+                              >复制</button>
+                              {quoteVersions.length >= 2 && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); openDiffModal(v.id) }}
+                                  className="text-[10px] px-2 py-1 rounded text-brand-600 hover:bg-brand-50 opacity-0 group-hover:opacity-100 transition"
+                                  title="与其他版本对比"
+                                >对比</button>
+                              )}
+                              <button
                                 onClick={(e) => { e.stopPropagation(); onApplyQuoteVersion(v.id) }}
                                 className="text-[10px] px-2 py-1 rounded bg-brand-600 text-white hover:bg-brand-700 opacity-0 group-hover:opacity-100 transition"
                               >应用</button>
@@ -965,6 +1041,114 @@ export function ComparisonPanel(props: Props) {
                 <div className="mt-2 text-[10px] text-slate-400 flex justify-between">
                   <span>支持多行文字</span>
                   <span>{quoteNote.length} 字</span>
+                </div>
+              </div>
+
+              <div className="card p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                    <span>💳</span> 收款管理
+                  </h3>
+                  <span className={`text-[11px] px-2.5 py-1 rounded-full border font-medium ${paymentStatusBadge.className}`}>
+                    {paymentStatusBadge.label}
+                  </span>
+                </div>
+
+                <div className="space-y-3.5">
+                  <div className="flex gap-1.5">
+                    {([
+                      { key: 'unpaid' as const, label: '未收款' },
+                      { key: 'partial' as const, label: '部分收款' },
+                      { key: 'paid' as const, label: '已结清' },
+                    ]).map(st => (
+                      <button
+                        key={st.key}
+                        onClick={() => updatePaymentStatus(st.key)}
+                        className={`flex-1 text-[11px] py-1.5 rounded-md border transition ${
+                          paymentRecord.paymentStatus === st.key
+                            ? st.key === 'unpaid' ? 'bg-slate-600 text-white border-slate-600'
+                              : st.key === 'partial' ? 'bg-orange-500 text-white border-orange-500'
+                              : 'bg-green-600 text-white border-green-600'
+                            : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >{st.label}</button>
+                    ))}
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-2">
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-slate-500 text-xs">应收总额</span>
+                      <span className="font-bold text-slate-800">{formatMoney(totalReceivable)}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-slate-500 text-xs">累计已收</span>
+                      <span className="font-semibold text-green-600">{formatMoney(totalPaid)}</span>
+                    </div>
+                    <div className="h-px bg-slate-200" />
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-slate-500 text-xs">待收金额</span>
+                      <span className="font-bold text-red-600">{formatMoney(balanceDue)}</span>
+                    </div>
+                    {paymentRecord.depositPaidAt && (
+                      <div className="flex justify-between items-center pt-1">
+                        <span className="text-slate-400 text-[11px]">已收时间</span>
+                        <span className="text-[11px] text-slate-500">
+                          {new Date(paymentRecord.depositPaidAt).toLocaleString('zh-CN')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-700 mb-1.5 block">累计已收金额（元）</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">¥</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={paymentRecord.totalPaid}
+                        onChange={e => setPaymentRecord({ totalPaid: Math.max(0, Number(e.target.value) || 0) })}
+                        className="input-base text-sm pl-7"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-700 mb-1.5 block">定金金额（元）</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">¥</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={paymentRecord.depositAmount}
+                          onChange={e => setPaymentRecord({ depositAmount: Math.max(0, Number(e.target.value) || 0) })}
+                          className="input-base text-sm pl-7"
+                          placeholder="0"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-700 mb-1.5 block">尾款截止日期</label>
+                      <input
+                        type="date"
+                        value={paymentRecord.balanceDueDate}
+                        onChange={e => setPaymentRecord({ balanceDueDate: e.target.value })}
+                        className="input-base text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-700 mb-1.5 block">收款备注</label>
+                    <textarea
+                      value={paymentRecord.paymentNote}
+                      onChange={e => setPaymentRecord({ paymentNote: e.target.value })}
+                      placeholder="收款渠道、分期付款说明、到账确认等..."
+                      className="input-base text-sm min-h-[70px] resize-y"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -1118,6 +1302,253 @@ export function ComparisonPanel(props: Props) {
           </div>
         </div>
       )}
+
+      {duplicateModalOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-30 flex items-center justify-center p-6" onClick={() => setDuplicateModalOpen(false)}>
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-brand-50 to-white">
+              <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                <span>📋</span> 复制报价方案
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">将基于当前方案创建一个新的副本</p>
+            </div>
+            <div className="p-6">
+              <label className="text-xs font-semibold text-slate-700 mb-1.5 block">新版本名称</label>
+              <input
+                type="text"
+                autoFocus
+                value={duplicateNewName}
+                onChange={e => setDuplicateNewName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleDuplicateConfirm()}
+                className="input-base text-sm"
+                placeholder="请输入新版本名称"
+              />
+            </div>
+            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
+              <button
+                className="btn-secondary"
+                onClick={() => { setDuplicateModalOpen(false); setDuplicateVersionId(''); setDuplicateNewName('') }}
+              >取消</button>
+              <button
+                className="btn-primary"
+                onClick={handleDuplicateConfirm}
+                disabled={!duplicateNewName.trim()}
+              >✓ 确认复制</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {diffModalOpen && (() => {
+        const diff = diffFromId && diffToId && diffFromId !== diffToId
+          ? onComputeVersionDiff(diffFromId, diffToId)
+          : null
+
+        const renderChangeTag = (changed: boolean | null, dir?: 'up' | 'down' | 'equal') => {
+          if (changed === null || changed === false) {
+            return <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">无变化</span>
+          }
+          if (dir === 'up') {
+            return <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 flex items-center gap-0.5"><span>↑</span> 增加</span>
+          }
+          if (dir === 'down') {
+            return <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 flex items-center gap-0.5"><span>↓</span> 减少</span>
+          }
+          return <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-100 text-brand-700">有变化</span>
+        }
+
+        const renderRow = (label: string, fromVal: string, toVal: string, changed: boolean | null, dir?: 'up' | 'down' | 'equal', suffixNote?: string) => {
+          return (
+            <div className={`flex items-center gap-3 py-2.5 px-3 rounded-lg ${changed ? 'bg-slate-50' : ''}`}>
+              <div className="w-24 flex-shrink-0 text-xs font-semibold text-slate-700">{label}</div>
+              <div className="flex-1 min-w-0 flex items-center gap-2 text-xs">
+                <span className={`flex-shrink-0 px-2 py-1 rounded-md border ${changed ? 'bg-white border-slate-200 text-slate-600' : 'text-slate-400'}`}>
+                  {fromVal || '-'}
+                </span>
+                <span className={`text-slate-400 flex-shrink-0 ${changed ? 'text-brand-500' : ''}`}>→</span>
+                <span className={`flex-shrink-0 px-2 py-1 rounded-md border ${
+                  changed
+                    ? dir === 'up' ? 'bg-green-50 border-green-200 text-green-700 font-semibold'
+                      : dir === 'down' ? 'bg-red-50 border-red-200 text-red-700 font-semibold'
+                      : 'bg-white border-brand-200 text-brand-700 font-semibold'
+                    : 'text-slate-400'
+                }`}>
+                  {toVal || '-'}
+                </span>
+                {suffixNote && changed && (
+                  <span className={`text-[10px] font-semibold flex-shrink-0 ${
+                    dir === 'up' ? 'text-green-600' : dir === 'down' ? 'text-red-600' : 'text-brand-600'
+                  }`}>{suffixNote}</span>
+                )}
+              </div>
+              <div className="flex-shrink-0">{renderChangeTag(changed, dir)}</div>
+            </div>
+          )
+        }
+
+        const getTicketsLabel = (ids: string[]) => {
+          if (!ids || ids.length === 0) return '无'
+          return ids.map(id => ticketPackages.find(t => t.id === id)?.name || id).join('、')
+        }
+
+        const fromVersion = quoteVersions.find(v => v.id === diffFromId)
+        const toVersion = quoteVersions.find(v => v.id === diffToId)
+
+        return (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-30 flex items-center justify-center p-6" onClick={() => setDiffModalOpen(false)}>
+            <div
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-brand-50 to-white flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                    <span>🔍</span> 报价方案差异对比
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">对比两个方案之间的关键配置与价格差异</p>
+                </div>
+                <button onClick={() => setDiffModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">
+                  ×
+                </button>
+              </div>
+
+              <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 mb-1.5 block flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-slate-400"></span> 对比版本 A（基准）
+                  </label>
+                  <select
+                    value={diffFromId}
+                    onChange={e => setDiffFromId(e.target.value)}
+                    className="input-base text-sm"
+                  >
+                    {quoteVersions.map(v => (
+                      <option key={v.id} value={v.id}>{v.name} · {new Date(v.createdAt).toLocaleDateString('zh-CN')}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 mb-1.5 block flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-brand-500"></span> 对比版本 B
+                  </label>
+                  <select
+                    value={diffToId}
+                    onChange={e => setDiffToId(e.target.value)}
+                    className="input-base text-sm"
+                  >
+                    {quoteVersions.map(v => (
+                      <option key={v.id} value={v.id}>{v.name} · {new Date(v.createdAt).toLocaleDateString('zh-CN')}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6">
+                {(!diffFromId || !diffToId || diffFromId === diffToId) ? (
+                  <div className="text-center py-16 text-slate-400 text-sm">
+                    请选择两个不同的版本进行对比
+                  </div>
+                ) : !diff ? (
+                  <div className="text-center py-16 text-slate-400 text-sm">
+                    暂无法计算差异
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {renderRow(
+                      '酒店档次',
+                      diff.hotelLevel ? hotelLevelLabels[diff.hotelLevel.from as keyof typeof hotelLevelLabels] || diff.hotelLevel.from : (fromVersion ? hotelLevelLabels[fromVersion.config.selectedHotelLevel] : ''),
+                      diff.hotelLevel ? hotelLevelLabels[diff.hotelLevel.to as keyof typeof hotelLevelLabels] || diff.hotelLevel.to : (toVersion ? hotelLevelLabels[toVersion.config.selectedHotelLevel] : ''),
+                      !!diff.hotelLevel,
+                    )}
+
+                    {renderRow(
+                      '门票组合',
+                      diff.tickets ? getTicketsLabel(diff.tickets.from) : (fromVersion ? getTicketsLabel(fromVersion.config.selectedTickets) : ''),
+                      diff.tickets ? getTicketsLabel(diff.tickets.to) : (toVersion ? getTicketsLabel(toVersion.config.selectedTickets) : ''),
+                      !!diff.tickets,
+                    )}
+
+                    {renderRow(
+                      '专业领队',
+                      diff.services?.leader ? (diff.services.leader.from ? '包含' : '不含') : (fromVersion?.config.includeLeader ? '包含' : '不含'),
+                      diff.services?.leader ? (diff.services.leader.to ? '包含' : '不含') : (toVersion?.config.includeLeader ? '包含' : '不含'),
+                      !!diff.services?.leader,
+                      diff.services?.leader && diff.services.leader.to && !diff.services.leader.from ? 'up' : diff.services?.leader && !diff.services.leader.to && diff.services.leader.from ? 'down' : 'equal',
+                    )}
+
+                    {renderRow(
+                      '应急救援',
+                      diff.services?.rescue ? (diff.services.rescue.from ? '包含' : '不含') : (fromVersion?.config.includeRescue ? '包含' : '不含'),
+                      diff.services?.rescue ? (diff.services.rescue.to ? '包含' : '不含') : (toVersion?.config.includeRescue ? '包含' : '不含'),
+                      !!diff.services?.rescue,
+                      diff.services?.rescue && diff.services.rescue.to && !diff.services.rescue.from ? 'up' : diff.services?.rescue && !diff.services.rescue.to && diff.services.rescue.from ? 'down' : 'equal',
+                    )}
+
+                    {renderRow(
+                      '旅游保险',
+                      diff.services?.insurance ? (diff.services.insurance.from ? '包含' : '不含') : (fromVersion?.config.includeInsurance ? '包含' : '不含'),
+                      diff.services?.insurance ? (diff.services.insurance.to ? '包含' : '不含') : (toVersion?.config.includeInsurance ? '包含' : '不含'),
+                      !!diff.services?.insurance,
+                      diff.services?.insurance && diff.services.insurance.to && !diff.services.insurance.from ? 'up' : diff.services?.insurance && !diff.services.insurance.to && diff.services.insurance.from ? 'down' : 'equal',
+                    )}
+
+                    {renderRow(
+                      '餐饮包',
+                      diff.services?.meals ? (diff.services.meals.from ? '包含' : '不含') : (fromVersion?.config.includeMeals ? '包含' : '不含'),
+                      diff.services?.meals ? (diff.services.meals.to ? '包含' : '不含') : (toVersion?.config.includeMeals ? '包含' : '不含'),
+                      !!diff.services?.meals,
+                      diff.services?.meals && diff.services.meals.to && !diff.services.meals.from ? 'up' : diff.services?.meals && !diff.services.meals.to && diff.services.meals.from ? 'down' : 'equal',
+                    )}
+
+                    {renderRow(
+                      '利润率',
+                      diff.profitMargin ? `${diff.profitMargin.from}%` : `${fromVersion?.config.profitMargin ?? 0}%`,
+                      diff.profitMargin ? `${diff.profitMargin.to}%` : `${toVersion?.config.profitMargin ?? 0}%`,
+                      !!diff.profitMargin,
+                      diff.profitMargin && diff.profitMargin.to > diff.profitMargin.from ? 'up' : diff.profitMargin && diff.profitMargin.to < diff.profitMargin.from ? 'down' : 'equal',
+                    )}
+
+                    {renderRow(
+                      '优惠折扣',
+                      diff.discount ? formatMoney(diff.discount.from) : formatMoney(fromVersion?.config.discountAmount ?? 0),
+                      diff.discount ? formatMoney(diff.discount.to) : formatMoney(toVersion?.config.discountAmount ?? 0),
+                      !!diff.discount,
+                      diff.discount && diff.discount.to > diff.discount.from ? 'up' : diff.discount && diff.discount.to < diff.discount.from ? 'down' : 'equal',
+                    )}
+
+                    <div className="h-px bg-slate-200 my-3" />
+
+                    {renderRow(
+                      '总价最低',
+                      diff.totalMin ? formatMoney(diff.totalMin.from) : '-',
+                      diff.totalMin ? formatMoney(diff.totalMin.to) : '-',
+                      !!diff.totalMin,
+                      diff.totalMin && diff.totalMin.diff > 0 ? 'up' : diff.totalMin && diff.totalMin.diff < 0 ? 'down' : 'equal',
+                      diff.totalMin ? (diff.totalMin.diff > 0 ? `+${formatMoney(diff.totalMin.diff)}` : diff.totalMin.diff < 0 ? formatMoney(diff.totalMin.diff) : '') : '',
+                    )}
+
+                    {renderRow(
+                      '总价最高',
+                      diff.totalMax ? formatMoney(diff.totalMax.from) : '-',
+                      diff.totalMax ? formatMoney(diff.totalMax.to) : '-',
+                      !!diff.totalMax,
+                      diff.totalMax && diff.totalMax.diff > 0 ? 'up' : diff.totalMax && diff.totalMax.diff < 0 ? 'down' : 'equal',
+                      diff.totalMax ? (diff.totalMax.diff > 0 ? `+${formatMoney(diff.totalMax.diff)}` : diff.totalMax.diff < 0 ? formatMoney(diff.totalMax.diff) : '') : '',
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-end">
+                <button className="btn-primary" onClick={() => setDiffModalOpen(false)}>关闭</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
